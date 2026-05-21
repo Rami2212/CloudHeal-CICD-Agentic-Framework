@@ -219,3 +219,6 @@ __marimo__/
 
 # Idea
 .idea/
+
+#Data Sets should included in  the git ignore
+datasets/
