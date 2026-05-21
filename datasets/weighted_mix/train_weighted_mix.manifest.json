@@ -1,0 +1,16 @@
+{
+  "seed": 42,
+  "output_size": 20000,
+  "weights": {
+    "lca_ci_builds_repair": 0.6,
+    "swe_bench": 0.4
+  },
+  "actual_counts": {
+    "lca_ci_builds_repair": 12038,
+    "swe_bench": 7962
+  },
+  "sources": [
+    "lca_ci_builds_repair",
+    "swe_bench"
+  ]
+}
