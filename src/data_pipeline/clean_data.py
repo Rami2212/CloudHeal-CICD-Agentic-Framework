@@ -2,21 +2,20 @@
 src/data_pipeline/clean_data.py
 ================================
 CloudHeal-CICD-Agentic-Framework
-Cleans three datasets before fine-tuning:
-  1. JetBrains-Research/lca-ci-builds-repair  (primary)
-  2. princeton-nlp/SWE-bench                  (secondary)
-  3. SWE-bench/SWE-bench_Verified             (eval)
+Cleans three local datasets before fine-tuning:
+    1. datasets/raw/train_primary/.../lca-ci-builds-repair      (primary)
+    2. datasets/raw/train_secondary/.../SWE-bench              (secondary)
+    3. datasets/raw/evaluate/.../SWE-bench_Verified            (eval)
 
 Output goes to:
   datasets/processed/cleaned/<dataset_name>.jsonl
 """
 
-import re
-import json
 import ast
+import json
 import logging
+import re
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 from datasets import load_dataset
@@ -27,6 +26,10 @@ from datasets import load_dataset
 RAW_DIR     = Path("datasets/raw")
 CLEANED_DIR = Path("datasets/processed/cleaned")
 CLEANED_DIR.mkdir(parents=True, exist_ok=True)
+
+PRIMARY_DATASET_ROOT = RAW_DIR / "train_primary" / "datasets--JetBrains-Research--lca-ci-builds-repair"
+SECONDARY_DATASET_ROOT = RAW_DIR / "train_secondary" / "datasets--princeton-nlp--SWE-bench"
+EVAL_DATASET_ROOT = RAW_DIR / "evaluate" / "datasets--SWE-bench--SWE-bench_Verified"
 
 # ─────────────────────────────────────────────
 #  Logger
@@ -81,12 +84,25 @@ def report(label: str, before: int, after: int) -> None:
     log.info(f"  {label}: {before} → {after} rows  (removed {removed})")
 
 
+def resolve_snapshot_dir(dataset_root: Path) -> Path:
+    """Return the single cached snapshot directory for a local HF dataset."""
+    snapshots_root = dataset_root / "snapshots"
+    snapshot_dirs = sorted(path for path in snapshots_root.iterdir() if path.is_dir())
+    if not snapshot_dirs:
+        raise FileNotFoundError(f"No snapshot directory found under {snapshots_root}")
+    return snapshot_dirs[0]
+
+
+def load_local_parquet_split(data_files: dict[str, str], split: str) -> pd.DataFrame:
+    """Load one split from a local parquet-backed Hugging Face dataset cache."""
+    return load_dataset("parquet", data_files=data_files, split=split).to_pandas()
+
+
 # ═══════════════════════════════════════════════════════════════
 #  DATASET 1 — JetBrains LCA CI Builds Repair
 # ═══════════════════════════════════════════════════════════════
 
 def clean_lca_ci(
-    subset: str = "default",
     split: str = "test",
     log_max_chars: int = 4_000,
     diff_max_chars: int = 8_000,
@@ -104,8 +120,11 @@ def clean_lca_ci(
     log.info("DATASET 1 — JetBrains/lca-ci-builds-repair")
     log.info("=" * 60)
 
-    ds = load_dataset("JetBrains-Research/lca-ci-builds-repair", subset)
-    df = ds[split].to_pandas()
+    snapshot_dir = resolve_snapshot_dir(PRIMARY_DATASET_ROOT)
+    data_files = {
+        "test": (snapshot_dir / "data" / "python" / "test-*.parquet").as_posix(),
+    }
+    df = load_local_parquet_split(data_files, split)
     n0 = len(df)
     log.info(f"  Loaded {n0} rows, {df.shape[1]} columns")
 
@@ -177,6 +196,7 @@ def clean_swebench(
     split: str = "train",
     patch_max_chars: int = 10_000,
     statement_max_chars: int = 4_000,
+    require_fail_to_pass: bool = True,
 ) -> pd.DataFrame:
     """
     Columns in this dataset
@@ -189,8 +209,13 @@ def clean_swebench(
     log.info("DATASET 2 — princeton-nlp/SWE-bench")
     log.info("=" * 60)
 
-    ds = load_dataset("princeton-nlp/SWE-bench")
-    df = ds[split].to_pandas()
+    snapshot_dir = resolve_snapshot_dir(SECONDARY_DATASET_ROOT)
+    data_files = {
+        "train": (snapshot_dir / "data" / "train-*.parquet").as_posix(),
+        "dev": (snapshot_dir / "data" / "dev-*.parquet").as_posix(),
+        "test": (snapshot_dir / "data" / "test-*.parquet").as_posix(),
+    }
+    df = load_local_parquet_split(data_files, split)
     n0 = len(df)
     log.info(f"  Loaded {n0} rows, {df.shape[1]} columns")
 
@@ -219,9 +244,10 @@ def clean_swebench(
     df["FAIL_TO_PASS"] = df["FAIL_TO_PASS"].apply(safe_parse_list)
     df["PASS_TO_PASS"] = df["PASS_TO_PASS"].apply(safe_parse_list)
 
-    # ── 7. Drop rows with empty FAIL_TO_PASS (nothing to test) 
-    df = df[df["FAIL_TO_PASS"].map(len) > 0]
-    report("After dropping rows with empty FAIL_TO_PASS", n0, len(df)); n0 = len(df)
+    # ── 7. Drop rows with empty FAIL_TO_PASS only when the split has test labels
+    if require_fail_to_pass:
+        df = df[df["FAIL_TO_PASS"].map(len) > 0]
+        report("After dropping rows with empty FAIL_TO_PASS", n0, len(df)); n0 = len(df)
 
     # ── 8. Truncate long text fields ─────────────────────────
     df["patch"]             = df["patch"].apply(lambda x: truncate(x, patch_max_chars))
@@ -257,8 +283,11 @@ def clean_swebench_verified(
     log.info("DATASET 3 — SWE-bench/SWE-bench_Verified")
     log.info("=" * 60)
 
-    ds = load_dataset("SWE-bench/SWE-bench_Verified")
-    df = ds[split].to_pandas()
+    snapshot_dir = resolve_snapshot_dir(EVAL_DATASET_ROOT)
+    data_files = {
+        "test": (snapshot_dir / "data" / "test-*.parquet").as_posix(),
+    }
+    df = load_local_parquet_split(data_files, split)
     n0 = len(df)
     log.info(f"  Loaded {n0} rows, {df.shape[1]} columns")
 
@@ -325,9 +354,12 @@ def main() -> None:
     df_lca = clean_lca_ci()
     save_jsonl(df_lca, "lca_ci_builds_repair.jsonl")
 
-    # 2. Secondary dataset — use all three splits
+    # 2. Secondary dataset — use all three local splits
     for split_name in ["train", "dev", "test"]:
-        df_swe = clean_swebench(split=split_name)
+        df_swe = clean_swebench(
+            split=split_name,
+            require_fail_to_pass=(split_name != "train"),
+        )
         save_jsonl(df_swe, f"swe_bench_{split_name}.jsonl")
 
     # 3. Eval dataset
