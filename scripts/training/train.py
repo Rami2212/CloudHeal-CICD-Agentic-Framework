@@ -2,15 +2,14 @@ import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import yaml
 from datasets import DatasetDict, load_dataset
 from peft import LoraConfig, get_peft_model
-from transformers import (AutoModelForCausalLM, AutoTokenizer,
-                          DataCollatorForLanguageModeling, Trainer,
-                          TrainingArguments, set_seed)
+from transformers import (AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerBase,
+                          Trainer, TrainingArguments, set_seed)
 
 
 @dataclass
@@ -50,6 +49,13 @@ class TrainConfig:
     system_prompt: str
     max_train_samples: Optional[int]
     max_eval_samples: Optional[int]
+    lr_scheduler_type: str
+    weight_decay: float
+    max_grad_norm: float
+    eval_steps: Optional[int]
+    save_total_limit: int
+    group_by_length: bool
+    dataloader_num_workers: int
 
 
 def load_config(path: Path) -> TrainConfig:
@@ -78,7 +84,37 @@ def load_config(path: Path) -> TrainConfig:
         system_prompt=raw.get("system_prompt", "You are a helpful coding assistant."),
         max_train_samples=raw.get("max_train_samples"),
         max_eval_samples=raw.get("max_eval_samples"),
+        lr_scheduler_type=raw.get("lr_scheduler_type", "cosine"),
+        weight_decay=raw.get("weight_decay", 0.01),
+        max_grad_norm=raw.get("max_grad_norm", 1.0),
+        eval_steps=raw.get("eval_steps"),
+        save_total_limit=raw.get("save_total_limit", 2),
+        group_by_length=raw.get("group_by_length", True),
+        dataloader_num_workers=raw.get("dataloader_num_workers", 2),
     )
+
+
+@dataclass
+class CausalLMCollator:
+    tokenizer: PreTrainedTokenizerBase
+    label_pad_token_id: int = -100
+
+    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+        batch = self.tokenizer.pad(features, padding=True, return_tensors="pt")
+        if "labels" not in features[0]:
+            batch["labels"] = batch["input_ids"].clone()
+            return batch
+
+        max_len = batch["input_ids"].shape[1]
+        padded_labels = []
+        for feature in features:
+            labels = feature["labels"]
+            pad_len = max_len - len(labels)
+            if pad_len > 0:
+                labels = labels + [self.label_pad_token_id] * pad_len
+            padded_labels.append(labels)
+        batch["labels"] = torch.tensor(padded_labels, dtype=torch.long)
+        return batch
 
 
 def stringify_input(value: Any) -> str:
@@ -89,26 +125,84 @@ def stringify_input(value: Any) -> str:
     return str(value)
 
 
-def format_example(example: Dict[str, Any], tokenizer: AutoTokenizer, system_prompt: str) -> str:
-    instruction = example.get("instruction") or "Complete the task."
-    input_block = stringify_input(example.get("input"))
-    output_block = stringify_input(example.get("output"))
-    user_content = instruction
-    if input_block:
-        user_content = f"{instruction}\n\nContext:\n{input_block}"
+def normalize_messages(example: Dict[str, Any], system_prompt: str) -> List[Dict[str, str]]:
+    if isinstance(example.get("messages"), list):
+        messages = [
+            {"role": str(item.get("role")), "content": stringify_input(item.get("content"))}
+            for item in example["messages"]
+            if isinstance(item, dict)
+        ]
+    elif "prompt" in example and "completion" in example:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": stringify_input(example.get("prompt"))},
+            {"role": "assistant", "content": stringify_input(example.get("completion"))},
+        ]
+    else:
+        instruction = example.get("instruction") or "Complete the task."
+        input_block = stringify_input(example.get("input"))
+        output_block = stringify_input(example.get("output"))
+        user_content = instruction
+        if input_block:
+            user_content = f"{instruction}\n\nContext:\n{input_block}"
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+            {"role": "assistant", "content": output_block},
+        ]
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_content},
-        {"role": "assistant", "content": output_block},
-    ]
+    if not any(message.get("role") == "system" for message in messages):
+        messages = [{"role": "system", "content": system_prompt}] + messages
+    return messages
 
+
+def ensure_assistant(messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    if messages and messages[-1].get("role") == "assistant":
+        return messages
+    return messages + [{"role": "assistant", "content": ""}]
+
+
+def split_prompt_and_full(messages: List[Dict[str, str]]) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    full_messages = ensure_assistant(messages)
+    if full_messages[-1].get("role") == "assistant":
+        return full_messages[:-1], full_messages
+    return full_messages, full_messages
+
+
+def format_prompt(messages: List[Dict[str, str]], tokenizer: PreTrainedTokenizerBase) -> str:
+    prompt_messages, _ = split_prompt_and_full(messages)
     if hasattr(tokenizer, "apply_chat_template"):
         return tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=False
+            prompt_messages, tokenize=False, add_generation_prompt=True
         )
 
-    return f"{system_prompt}\n\nUser:\n{user_content}\n\nAssistant:\n{output_block}"
+    system_prompt = prompt_messages[0]["content"] if prompt_messages else ""
+    user_content = ""
+    for message in prompt_messages:
+        if message.get("role") == "user":
+            user_content = message.get("content", "")
+            break
+    return f"{system_prompt}\n\nUser:\n{user_content}\n\nAssistant:\n"
+
+
+def format_full(messages: List[Dict[str, str]], tokenizer: PreTrainedTokenizerBase) -> str:
+    _, full_messages = split_prompt_and_full(messages)
+    if hasattr(tokenizer, "apply_chat_template"):
+        return tokenizer.apply_chat_template(
+            full_messages, tokenize=False, add_generation_prompt=False
+        )
+
+    system_prompt = full_messages[0]["content"] if full_messages else ""
+    user_content = ""
+    assistant_content = ""
+    for message in full_messages:
+        if message.get("role") == "user":
+            user_content = message.get("content", "")
+        if message.get("role") == "assistant":
+            assistant_content = message.get("content", "")
+    return (
+        f"{system_prompt}\n\nUser:\n{user_content}\n\nAssistant:\n{assistant_content}"
+    )
 
 
 def resolve_precision(precision: PrecisionSettings) -> Dict[str, bool]:
@@ -140,6 +234,7 @@ def main() -> None:
     set_seed(cfg.seed)
 
     tokenizer = AutoTokenizer.from_pretrained(cfg.model_name_or_path, use_fast=True)
+    tokenizer.padding_side = "right"
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -165,12 +260,29 @@ def main() -> None:
     datasets = load_datasets(cfg)
 
     def tokenize_fn(example: Dict[str, Any]) -> Dict[str, List[int]]:
-        text = format_example(example, tokenizer, cfg.system_prompt)
-        return tokenizer(
-            text,
+        messages = normalize_messages(example, cfg.system_prompt)
+        prompt_text = format_prompt(messages, tokenizer)
+        full_text = format_full(messages, tokenizer)
+
+        full_tokens = tokenizer(
+            full_text,
             truncation=True,
             max_length=cfg.max_seq_length,
+            add_special_tokens=False,
         )
+        prompt_ids = tokenizer(
+            prompt_text,
+            truncation=True,
+            max_length=cfg.max_seq_length,
+            add_special_tokens=False,
+        )["input_ids"]
+
+        labels = list(full_tokens["input_ids"])
+        prompt_len = min(len(prompt_ids), len(labels))
+        if prompt_len:
+            labels[:prompt_len] = [-100] * prompt_len
+        full_tokens["labels"] = labels
+        return full_tokens
 
     tokenized = datasets.map(
         tokenize_fn,
@@ -183,7 +295,7 @@ def main() -> None:
     if cfg.max_eval_samples and "validation" in tokenized:
         tokenized["validation"] = tokenized["validation"].select(range(cfg.max_eval_samples))
 
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    data_collator = CausalLMCollator(tokenizer=tokenizer)
 
     precision_flags = resolve_precision(cfg.precision)
 
@@ -198,12 +310,20 @@ def main() -> None:
         logging_steps=cfg.logging_steps,
         save_steps=cfg.save_steps,
         evaluation_strategy="steps" if "validation" in tokenized else "no",
-        eval_steps=cfg.logging_steps,
-        save_total_limit=2,
+        eval_steps=cfg.eval_steps or cfg.logging_steps,
+        save_strategy="steps",
+        save_total_limit=cfg.save_total_limit,
         report_to="none",
         bf16=precision_flags["bf16"],
         fp16=precision_flags["fp16"],
         seed=cfg.seed,
+        lr_scheduler_type=cfg.lr_scheduler_type,
+        weight_decay=cfg.weight_decay,
+        max_grad_norm=cfg.max_grad_norm,
+        group_by_length=cfg.group_by_length,
+        dataloader_num_workers=cfg.dataloader_num_workers,
+        remove_unused_columns=False,
+        gradient_checkpointing=cfg.gradient_checkpointing,
     )
 
     trainer = Trainer(

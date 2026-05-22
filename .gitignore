@@ -219,3 +219,6 @@ __marimo__/
 
 # Idea
 .idea/
+
+# Data
+datasets/

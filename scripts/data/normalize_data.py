@@ -23,7 +23,7 @@ INPUT_PATH = ROOT / "datasets" / "weighted_mix" / "train_weighted_mix.jsonl"
 NORMALIZED_DIR = ROOT / "datasets" / "processed" / "normalized"
 DEDUPLICATED_DIR = ROOT / "datasets" / "processed" / "deduplicated"
 NORMALIZED_PATH = NORMALIZED_DIR / "train_weighted_mix_normalized.jsonl"
-DEDUPLICATED_PATH = DEDUPLICATED_DIR / "train_weighted_mix_deduplicated.jsonl"
+DEDUPLICATED_PATH = DEDUPLICATED_DIR / "train.jsonl"
 NORMALIZED_MANIFEST_PATH = NORMALIZED_DIR / "train_weighted_mix_normalized.manifest.json"
 DEDUPLICATED_MANIFEST_PATH = DEDUPLICATED_DIR / "train_weighted_mix_deduplicated.manifest.json"
 

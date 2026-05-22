@@ -3,20 +3,27 @@ train_file: datasets/annotated/train.jsonl
 validation_file: datasets/annotated/val.jsonl
 test_file: datasets/annotated/test.jsonl
 output_dir: experiments/checkpoints/cloudheal-qwen25-coder-7b-lora
-max_seq_length: 8192
+max_seq_length: 4096
 num_train_epochs: 2
 per_device_train_batch_size: 1
 per_device_eval_batch_size: 1
 gradient_accumulation_steps: 16
-learning_rate: 0.0002
+learning_rate: 0.00015
 warmup_ratio: 0.03
 logging_steps: 10
-save_steps: 500
+save_steps: 200
 seed: 42
 gradient_checkpointing: true
 system_prompt: You are a helpful coding assistant.
 max_train_samples: null
 max_eval_samples: null
+lr_scheduler_type: cosine
+weight_decay: 0.01
+max_grad_norm: 1.0
+eval_steps: 50
+save_total_limit: 2
+group_by_length: true
+dataloader_num_workers: 2
 lora:
   r: 16
   alpha: 32
@@ -31,5 +38,4 @@ lora:
     - down_proj
 precision:
   use_bf16_if_supported: true
-  fallback_fp16: false
-
+  fallback_fp16: true

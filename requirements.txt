@@ -6,4 +6,5 @@ datasets>=2.19.0
 pyyaml>=6.0.1
 tqdm>=4.66.0
 safetensors>=0.4.3
-
+# PyTorch (ROCm install may override this)
+torch>=2.1.0
