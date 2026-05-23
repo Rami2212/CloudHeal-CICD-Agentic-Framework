@@ -6,10 +6,13 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 
 BASE_MODEL_NAME = "Qwen/Qwen2.5-Coder-7B-Instruct"
-ADAPTER_PATH = "server_upload/output"
-TEST_DATA_PATH = "server_upload/data/evaluation-test.jsonl"
-BASE_RESULTS_PATH = "server_upload/results/base_model_outputs.jsonl"
-FINETUNED_RESULTS_PATH = "server_upload/results/finetuned_model_outputs.jsonl"
+
+# Resolve paths relative to this script's directory
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ADAPTER_PATH = os.path.join(SCRIPT_DIR, "output")
+TEST_DATA_PATH = os.path.join(SCRIPT_DIR, "data", "evaluation-test.jsonl")
+BASE_RESULTS_PATH = os.path.join(SCRIPT_DIR, "results", "base_model_outputs.jsonl")
+FINETUNED_RESULTS_PATH = os.path.join(SCRIPT_DIR, "results", "finetuned_model_outputs.jsonl")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate base model vs fine-tuned model")
