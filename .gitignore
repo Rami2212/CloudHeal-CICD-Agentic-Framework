@@ -220,5 +220,8 @@ __marimo__/
 # Idea
 .idea/
 
-#Data Sets should included in  the git ignore
+# Data
 datasets/
+server_upload/data/train.jsonl
+server_upload/data/val.jsonl
+server_upload/data/test.jsonl
