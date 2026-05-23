@@ -1,0 +1,25 @@
+{
+  "id": "ci-failure-5678",
+  "source": "github_actions",
+  "task_type": "issue_resolution",
+  "instruction": "Fix the failing test case in the CI pipeline.",
+  "input": {
+    "repo": "acme/ecommerce-api",
+    "instance_id": "5678",
+    "base_commit": "f9e8d7c6",
+    "problem_statement": "Our CI/CD pipeline fails during the integration tests. The test `test_checkout_empty_cart` is failing with a 500 Internal Server Error. It seems the `checkout` endpoint doesn't handle an empty cart properly and tries to access `cart.items[0]` without checking if the cart is empty, leading to an IndexError. It should return a 400 Bad Request instead.",
+    "hints_text": "Check if `cart.items` is empty in `checkout()` before processing.",
+    "version": "2.1.4",
+    "created_at": "2023-11-15T08:30:00Z",
+    "environment_setup_commit": "f9e8d7c6",
+    "FAIL_TO_PASS": [
+      "tests/integration/test_checkout.py::test_checkout_empty_cart"
+    ],
+    "PASS_TO_PASS": [
+      "tests/integration/test_checkout.py::test_checkout_valid_cart"
+    ],
+    "test_patch": "--- a/tests/integration/test_checkout.py\n+++ b/tests/integration/test_checkout.py\n@@ -25,3 +25,4 @@\n def test_checkout_empty_cart(client):\n     response = client.post('/checkout', json={\"cart\": []})\n-    assert response.status_code == 400\n+    assert response.status_code == 400\n+    assert response.json == {\"error\": \"Cart is empty\"}\n"
+  },
+  "output": "--- a/src/api/checkout.py\n+++ b/src/api/checkout.py\n@@ -12,2 +12,4 @@\n def process_checkout(cart):\n+    if not cart.get(\"items\"):\n+        return {\"error\": \"Cart is empty\"}, 400\n     first_item = cart[\"items\"][0]\n",
+  "metadata": {}
+}
