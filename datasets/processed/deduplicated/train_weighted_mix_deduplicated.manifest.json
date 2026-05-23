@@ -1,0 +1,8 @@
+{
+  "input_path": "datasets\\processed\\normalized\\train_weighted_mix_normalized.jsonl",
+  "output_path": "datasets\\processed\\deduplicated\\train_weighted_mix_deduplicated.jsonl",
+  "rows_in": 20000,
+  "rows_out": 6541,
+  "duplicates_removed": 13459,
+  "dedupe_strategy": "first occurrence of normalized JSON signature"
+}
