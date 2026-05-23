@@ -1,16 +1,11 @@
 {
-  "seed": 42,
-  "output_size": 20000,
-  "weights": {
-    "lca_ci_builds_repair": 0.6,
-    "swe_bench": 0.4
-  },
-  "actual_counts": {
-    "lca_ci_builds_repair": 12038,
-    "swe_bench": 7962
-  },
-  "sources": [
-    "lca_ci_builds_repair",
-    "swe_bench"
-  ]
+  "primary_path": "datasets\\processed\\cleaned\\primary.jsonl",
+  "secondary_path": "datasets\\processed\\cleaned\\secondary_train.jsonl",
+  "output_path": "datasets\\weighted_mix\\train_weighted_mix.jsonl",
+  "n_primary_rows": 68,
+  "n_secondary_rows": 18539,
+  "factor_used": 5,
+  "rows_out": 18879,
+  "shuffle_seed": 12345,
+  "computed_from_target": false
 }

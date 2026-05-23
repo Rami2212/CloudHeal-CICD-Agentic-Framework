@@ -17,13 +17,13 @@ from pathlib import Path
 from typing import Any, Iterable
 
 ROOT = Path(__file__).resolve().parents[2]
-INPUT_PATH = ROOT / "datasets" / "weighted_mix" / "train_weighted_mix.jsonl"
+INPUT_PATH = ROOT / "datasets" / "weighted_mix" / "train_weighted_mix_new.jsonl"
 OUT_DIR = ROOT / "datasets" / "processed" / "normalized"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-NORMALIZED_PATH = OUT_DIR / "train_weighted_mix_normalized.jsonl"
+NORMALIZED_PATH = OUT_DIR / "train_weighted_mix_normalized_new.jsonl"
 REJECTED_PATH = OUT_DIR / "train_weighted_mix_rejected.jsonl"
-MANIFEST_PATH = OUT_DIR / "train_weighted_mix_normalized.manifest.json"
+MANIFEST_PATH = OUT_DIR / "train_weighted_mix_normalized_new.manifest.json"
 
 
 def read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
