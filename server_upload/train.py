@@ -9,7 +9,12 @@ import yaml
 from datasets import Dataset, DatasetDict, load_dataset
 from peft import LoraConfig, get_peft_model
 from transformers import (AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerBase,
-                          Trainer, TrainingArguments, set_seed)
+                          Trainer, TrainerCallback, TrainerControl, TrainerState,
+                          TrainingArguments, set_seed)
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_CONFIG_PATH = SCRIPT_DIR / "train.yaml"
 
 
 @dataclass
@@ -73,8 +78,7 @@ def resolve_path(path_value: str) -> Path:
     path = Path(path_value)
     if path.is_absolute():
         return path
-    repo_root = Path(__file__).resolve().parents[2]
-    return repo_root / path
+    return SCRIPT_DIR / path
 
 
 def iter_jsonl_rows(path: Path) -> Iterable[Tuple[int, Dict[str, Any]]]:
@@ -178,14 +182,20 @@ def validate_datasets_before_training(cfg: TrainConfig) -> None:
 
 def load_config(path: Path) -> TrainConfig:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    train_file = str(resolve_path(raw["train_file"]))
+    validation_file = raw.get("validation_file")
+    test_file = raw.get("test_file")
+    output_dir = resolve_path(raw["output_dir"])
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     lora = LoraSettings(**raw["lora"])
     precision = PrecisionSettings(**raw["precision"])
     return TrainConfig(
         model_name_or_path=raw["model_name_or_path"],
-        train_file=raw["train_file"],
-        output_dir=raw["output_dir"],
-        validation_file=raw.get("validation_file"),
-        test_file=raw.get("test_file"),
+        train_file=train_file,
+        output_dir=str(output_dir),
+        validation_file=str(resolve_path(validation_file)) if validation_file else None,
+        test_file=str(resolve_path(test_file)) if test_file else None,
         max_seq_length=raw["max_seq_length"],
         num_train_epochs=raw["num_train_epochs"],
         per_device_train_batch_size=raw["per_device_train_batch_size"],
@@ -237,6 +247,42 @@ class CausalLMCollator:
             padded_labels.append(labels)
         batch["labels"] = torch.tensor(padded_labels, dtype=torch.long)
         return batch
+
+
+class EpochMetricsCallback(TrainerCallback):
+    def __init__(self, output_dir: str) -> None:
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.jsonl_path = self.output_dir / "epoch_metrics.jsonl"
+
+    def on_epoch_end(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs: Any,
+    ) -> TrainerControl:
+        epoch = float(state.epoch or 0.0)
+        epoch_number = max(1, round(epoch))
+        epoch_logs = [
+            log for log in state.log_history
+            if abs(float(log.get("epoch", -1.0)) - epoch) < 0.01
+        ]
+        payload = {
+            "epoch": epoch,
+            "epoch_number": epoch_number,
+            "global_step": state.global_step,
+            "best_metric": state.best_metric,
+            "best_model_checkpoint": state.best_model_checkpoint,
+            "logs": epoch_logs,
+        }
+
+        epoch_path = self.output_dir / f"epoch_{epoch_number:02d}_metrics.json"
+        epoch_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        with self.jsonl_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, sort_keys=True) + "\n")
+        print(f"[metrics] wrote epoch details to {epoch_path}")
+        return control
 
 
 def stringify_input(value: Any) -> str:
@@ -538,7 +584,11 @@ def create_training_arguments(cfg: TrainConfig, has_validation: bool) -> Trainin
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="LoRA fine-tuning for Qwen2.5-Coder-7B")
-    parser.add_argument("--config", required=True, help="Path to training YAML config")
+    parser.add_argument(
+        "--config",
+        default=str(DEFAULT_CONFIG_PATH),
+        help="Path to training YAML config. Defaults to server_upload/train.yaml",
+    )
     parser.add_argument(
         "--skip_data_validation",
         action="store_true",
@@ -557,7 +607,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    cfg = load_config(Path(args.config))
+    cfg = load_config(resolve_path(args.config))
     if not args.skip_data_validation:
         validate_datasets_before_training(cfg)
     set_seed(cfg.seed)
@@ -612,6 +662,7 @@ def main() -> None:
         eval_dataset=tokenized.get("validation"),
         tokenizer=tokenizer,
         data_collator=data_collator,
+        callbacks=[EpochMetricsCallback(cfg.output_dir)],
     )
 
     trainer.train()
