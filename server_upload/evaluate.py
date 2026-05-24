@@ -9,7 +9,7 @@ BASE_MODEL_NAME = "Qwen/Qwen2.5-Coder-7B-Instruct"
 
 # Resolve paths relative to this script's directory
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-ADAPTER_PATH = os.path.join(SCRIPT_DIR, "output")
+ADAPTER_PATH = os.path.join(SCRIPT_DIR, "output2")
 TEST_DATA_PATH = os.path.join(SCRIPT_DIR, "data", "evaluation-test.jsonl")
 BASE_RESULTS_PATH = os.path.join(SCRIPT_DIR, "results", "base_model_outputs.jsonl")
 FINETUNED_RESULTS_PATH = os.path.join(SCRIPT_DIR, "results", "finetuned_model_outputs.jsonl")
