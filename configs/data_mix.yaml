@@ -3,9 +3,9 @@ output_size: 20000
 sources:
   - name: lca_ci_builds_repair
     path: datasets/processed/cleaned/lca_ci_builds_repair.jsonl
-    weight: 0.60
+    weight: 5
   - name: swe_bench
     path: datasets/processed/cleaned/swe_bench_train.jsonl
-    weight: 0.40
+    weight: 1
 output_path: datasets/weighted_mix/train_weighted_mix.jsonl
 manifest_path: datasets/weighted_mix/train_weighted_mix.manifest.json
