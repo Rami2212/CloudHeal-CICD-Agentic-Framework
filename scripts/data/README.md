@@ -33,18 +33,8 @@ Expected outputs:
 - `datasets/processed/cleaned/swe_bench_test.jsonl`
 - `datasets/processed/cleaned/swe_bench_verified.jsonl`
 
-## Step 2: Build weighted mix
-Uses `configs/data_mix.yaml` to sample from cleaned sources with replacement until `output_size` is reached.
 
-```powershell
-python scripts/data/build_weighted_mix.py
-```
-
-Outputs:
-- `datasets/weighted_mix/train_weighted_mix.jsonl`
-- `datasets/weighted_mix/train_weighted_mix.manifest.json`
-
-## Step 3: Normalize and deduplicate
+## Step 2: Normalize and deduplicate
 Normalizes text and timestamps and writes a deduplicated variant.
 
 ```powershell
@@ -56,6 +46,16 @@ Outputs:
 - `datasets/processed/normalized/train_weighted_mix_normalized.manifest.json`
 - `datasets/processed/deduplicated/train_weighted_mix_deduplicated.jsonl`
 - `datasets/processed/deduplicated/train_weighted_mix_deduplicated.manifest.json`
+## Step 3: Build weighted mix
+Uses `configs/data_mix.yaml` to sample from cleaned sources with replacement until `output_size` is reached.
+
+```powershell
+python scripts/data/build_weighted_mix.py
+```
+
+Outputs:
+- `datasets/weighted_mix/train_weighted_mix.jsonl`
+- `datasets/weighted_mix/train_weighted_mix.manifest.json`
 
 ## Optional: Run normalization via pipeline wrapper
 
