@@ -219,3 +219,13 @@ __marimo__/
 
 # Idea
 .idea/
+
+# Data
+datasets/
+datasets/processed/
+server_upload/
+server_upload/data/train.jsonl
+server_upload/data/val.jsonl
+server_upload/data/test.jsonl
+server_upload/output/
+server_upload/results/
