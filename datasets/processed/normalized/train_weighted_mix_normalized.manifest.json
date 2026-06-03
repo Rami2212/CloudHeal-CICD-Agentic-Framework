@@ -1,9 +1,0 @@
-{
-  "input_path": "datasets\\weighted_mix\\train_weighted_mix.jsonl",
-  "output_path": "datasets\\processed\\normalized\\train_weighted_mix_normalized.jsonl",
-  "rejected_path": "datasets\\processed\\normalized\\train_weighted_mix_rejected.jsonl",
-  "rows_in": 20000,
-  "rows_out": 20000,
-  "rows_rejected": 0,
-  "note": "This script auto-detects LCA vs SWE-bench rows and converts them to instruction/input/output format."
-}

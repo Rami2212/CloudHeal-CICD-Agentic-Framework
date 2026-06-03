@@ -9,7 +9,12 @@ import yaml
 from datasets import Dataset, DatasetDict, load_dataset
 from peft import LoraConfig, get_peft_model
 from transformers import (AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerBase,
-                          Trainer, TrainingArguments, set_seed)
+                          Trainer, TrainerCallback, TrainerControl, TrainerState,
+                          TrainingArguments, set_seed)
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_CONFIG_PATH = SCRIPT_DIR / "train.yaml"
 
 
 @dataclass
@@ -39,7 +44,7 @@ class TrainConfig:
     per_device_eval_batch_size: int
     gradient_accumulation_steps: int
     learning_rate: float
-    warmup_ratio: float
+    warmup_steps: int
     logging_steps: int
     save_steps: int
     seed: int
@@ -73,8 +78,7 @@ def resolve_path(path_value: str) -> Path:
     path = Path(path_value)
     if path.is_absolute():
         return path
-    repo_root = Path(__file__).resolve().parents[2]
-    return repo_root / path
+    return SCRIPT_DIR / path
 
 
 def iter_jsonl_rows(path: Path) -> Iterable[Tuple[int, Dict[str, Any]]]:
@@ -178,21 +182,27 @@ def validate_datasets_before_training(cfg: TrainConfig) -> None:
 
 def load_config(path: Path) -> TrainConfig:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    train_file = str(resolve_path(raw["train_file"]))
+    validation_file = raw.get("validation_file")
+    test_file = raw.get("test_file")
+    output_dir = resolve_path(raw["output_dir"])
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     lora = LoraSettings(**raw["lora"])
     precision = PrecisionSettings(**raw["precision"])
     return TrainConfig(
         model_name_or_path=raw["model_name_or_path"],
-        train_file=raw["train_file"],
-        output_dir=raw["output_dir"],
-        validation_file=raw.get("validation_file"),
-        test_file=raw.get("test_file"),
+        train_file=train_file,
+        output_dir=str(output_dir),
+        validation_file=str(resolve_path(validation_file)) if validation_file else None,
+        test_file=str(resolve_path(test_file)) if test_file else None,
         max_seq_length=raw["max_seq_length"],
         num_train_epochs=raw["num_train_epochs"],
         per_device_train_batch_size=raw["per_device_train_batch_size"],
         per_device_eval_batch_size=raw.get("per_device_eval_batch_size", 1),
         gradient_accumulation_steps=raw["gradient_accumulation_steps"],
         learning_rate=raw["learning_rate"],
-        warmup_ratio=raw["warmup_ratio"],
+        warmup_steps=raw["warmup_steps"],
         logging_steps=raw["logging_steps"],
         save_steps=raw["save_steps"],
         seed=raw.get("seed", 42),
@@ -239,6 +249,42 @@ class CausalLMCollator:
         return batch
 
 
+class EpochMetricsCallback(TrainerCallback):
+    def __init__(self, output_dir: str) -> None:
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.jsonl_path = self.output_dir / "epoch_metrics.jsonl"
+
+    def on_epoch_end(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs: Any,
+    ) -> TrainerControl:
+        epoch = float(state.epoch or 0.0)
+        epoch_number = max(1, round(epoch))
+        epoch_logs = [
+            log for log in state.log_history
+            if abs(float(log.get("epoch", -1.0)) - epoch) < 0.01
+        ]
+        payload = {
+            "epoch": epoch,
+            "epoch_number": epoch_number,
+            "global_step": state.global_step,
+            "best_metric": state.best_metric,
+            "best_model_checkpoint": state.best_model_checkpoint,
+            "logs": epoch_logs,
+        }
+
+        epoch_path = self.output_dir / f"epoch_{epoch_number:02d}_metrics.json"
+        epoch_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        with self.jsonl_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, sort_keys=True) + "\n")
+        print(f"[metrics] wrote epoch details to {epoch_path}")
+        return control
+
+
 def stringify_input(value: Any) -> str:
     if value is None:
         return ""
@@ -263,7 +309,7 @@ def normalize_messages(example: Dict[str, Any], system_prompt: str) -> List[Dict
     else:
         instruction = example.get("instruction") or "Complete the task."
         input_block = stringify_input(example.get("input"))
-        output_block = stringify_input(example.get("output"))
+        output_block = stringify_input(example.get("../../server_upload/output"))
         user_content = instruction
         if input_block:
             user_content = f"{instruction}\n\nContext:\n{input_block}"
@@ -353,28 +399,39 @@ def build_tokenize_fn(cfg: TrainConfig, tokenizer: PreTrainedTokenizerBase):
         prompt_text = format_prompt(messages, tokenizer)
         full_text = format_full(messages, tokenizer)
 
-        full_ids = tokenizer(full_text, add_special_tokens=False)["input_ids"]
-        prompt_ids = tokenizer(prompt_text, add_special_tokens=False)["input_ids"]
+        # Tokenize full conversation and prompt separately
+        full_ids = tokenizer(
+            full_text,
+            add_special_tokens=False,
+            max_length=cfg.max_seq_length,
+            truncation=True,
+        )["input_ids"]
+
+        prompt_ids = tokenizer(
+            prompt_text,
+            add_special_tokens=False,
+            max_length=cfg.max_seq_length,
+            truncation=True,
+        )["input_ids"]
+
         response_ids = full_ids[len(prompt_ids):]
         if not response_ids:
-            output_text = stringify_input(example.get("output") or example.get("completion"))
+            output_text = stringify_input(example.get("../../server_upload/output") or example.get("completion"))
             response_ids = tokenizer(output_text, add_special_tokens=False)["input_ids"]
         if not response_ids:
             raise ValueError("Example has no tokenized assistant response")
 
-        if len(full_ids) <= cfg.max_seq_length:
-            input_ids = full_ids
-            prompt_len = min(len(prompt_ids), len(input_ids))
-        else:
-            response_budget = min(len(response_ids), cfg.max_seq_length)
-            prompt_budget = cfg.max_seq_length - response_budget
-            prompt_slice = prompt_ids[-prompt_budget:] if prompt_budget else []
-            input_ids = prompt_slice + response_ids[:response_budget]
-            prompt_len = prompt_budget
+        # ✅ Always keep some response tokens
+        response_budget = min(len(response_ids), cfg.max_seq_length // 2)
+        prompt_budget = cfg.max_seq_length - response_budget
+        prompt_slice = prompt_ids[-prompt_budget:] if prompt_budget else []
+        input_ids = prompt_slice + response_ids[:response_budget]
+        prompt_len = len(prompt_slice)
 
         labels = list(input_ids)
         if prompt_len:
             labels[:prompt_len] = [-100] * prompt_len
+
         return {
             "input_ids": input_ids,
             "attention_mask": [1] * len(input_ids),
@@ -382,7 +439,6 @@ def build_tokenize_fn(cfg: TrainConfig, tokenizer: PreTrainedTokenizerBase):
         }
 
     return tokenize_fn
-
 
 def select_first_samples(dataset: Dataset, limit: int) -> Dataset:
     if limit <= 0:
@@ -506,7 +562,7 @@ def create_training_arguments(cfg: TrainConfig, has_validation: bool) -> Trainin
         per_device_eval_batch_size=cfg.per_device_eval_batch_size,
         gradient_accumulation_steps=cfg.gradient_accumulation_steps,
         learning_rate=cfg.learning_rate,
-        warmup_ratio=cfg.warmup_ratio,
+        warmup_steps=cfg.warmup_steps,
         logging_steps=cfg.logging_steps,
         save_steps=cfg.save_steps,
         eval_steps=cfg.eval_steps or cfg.logging_steps,
@@ -519,7 +575,6 @@ def create_training_arguments(cfg: TrainConfig, has_validation: bool) -> Trainin
         lr_scheduler_type=cfg.lr_scheduler_type,
         weight_decay=cfg.weight_decay,
         max_grad_norm=cfg.max_grad_norm,
-        group_by_length=cfg.group_by_length,
         dataloader_num_workers=cfg.dataloader_num_workers,
         remove_unused_columns=False,
         gradient_checkpointing=cfg.gradient_checkpointing,
@@ -538,7 +593,11 @@ def create_training_arguments(cfg: TrainConfig, has_validation: bool) -> Trainin
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="LoRA fine-tuning for Qwen2.5-Coder-7B")
-    parser.add_argument("--config", required=True, help="Path to training YAML config")
+    parser.add_argument(
+        "--config",
+        default=str(DEFAULT_CONFIG_PATH),
+        help="Path to training YAML config. Defaults to server_upload/train.yaml",
+    )
     parser.add_argument(
         "--skip_data_validation",
         action="store_true",
@@ -557,7 +616,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    cfg = load_config(Path(args.config))
+    cfg = load_config(resolve_path(args.config))
     if not args.skip_data_validation:
         validate_datasets_before_training(cfg)
     set_seed(cfg.seed)
@@ -573,7 +632,7 @@ def main() -> None:
 
     model = AutoModelForCausalLM.from_pretrained(
         cfg.model_name_or_path,
-        torch_dtype=torch.bfloat16 if resolve_precision(cfg.precision)["bf16"] else None,
+        dtype=torch.bfloat16 if resolve_precision(cfg.precision)["bf16"] else None,
     )
 
     if cfg.gradient_checkpointing:
@@ -599,6 +658,13 @@ def main() -> None:
         desc="Tokenizing",
     )
 
+    print("[debug] Checking first few tokenized samples...")
+    for i in range(3):
+        sample = tokenized["train"][i]
+        print(f"Sample {i}: input_ids[:10]={sample['input_ids'][:10]}")
+        print(f"Sample {i}: labels[:10]={sample['labels'][:10]}")
+        print(f"Sample {i}: supervised tokens={sum(1 for l in sample['labels'] if l != -100)}")
+
     tokenized = select_configured_samples(cfg, tokenized)
 
     data_collator = CausalLMCollator(tokenizer=tokenizer)
@@ -610,8 +676,8 @@ def main() -> None:
         args=training_args,
         train_dataset=tokenized["train"],
         eval_dataset=tokenized.get("validation"),
-        tokenizer=tokenizer,
         data_collator=data_collator,
+        callbacks=[EpochMetricsCallback(cfg.output_dir)],
     )
 
     trainer.train()
