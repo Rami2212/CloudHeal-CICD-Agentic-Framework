@@ -6,3 +6,4 @@ pyyaml>=6.0.1
 tqdm>=4.66.0
 safetensors>=0.4.3
 torch>=2.1.0
+tools
