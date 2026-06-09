@@ -276,7 +276,7 @@ Return ONLY the modified Python code, with no explanation."""
 if __name__ == "__main__":
 
     config = ModelLoadConfig(
-        base_model="your-base-model",       # e.g. "meta-llama/Llama-3-8B"
+        base_model="Qwen/Qwen2.5-Coder-7B-Instruct",       # e.g. "meta-llama/Llama-3-8B"
         adapter_path="./adapter",           # path to your LoRA adapter
     )
 
