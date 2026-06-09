@@ -1,35 +1,57 @@
 # Testing Agent
 
-Simple client-driven testing agent for running the base model and a LoRA-adapted model on the same jsonl dataset.
+`new_agent.py` evaluates the base CI/CD remediation model against the same
+base model with a PEFT/LoRA fine-tuned adapter attached.
 
-## Input format
+## What It Does
 
-Each jsonl line should be a JSON object with at least:
-
-- `id`
-- `instruction`
-- `input` (optional; object or string)
-- `output` (optional reference)
-
-This mirrors the format used by `scripts/training/comparison.py`.
-
-## Outputs
-
-Depending on `--mode`:
-
-- `base_outputs.jsonl`
-- `finetuned_outputs.jsonl`
-- `comparison_report.jsonl`
+- Generates 10 synthetic CI/CD failure logs with expected unified-diff fixes.
+- Runs the same optimized CloudHeal prompt against the base model.
+- Runs the same prompt against the base model plus fine-tuned adapter.
+- Saves generated fixes separately for each model.
+- Builds an evaluation report for accuracy, estimated resolution success rate,
+  MTTR, patch format, target-file coverage, keyword coverage, and safety checks.
 
 ## Usage
 
+Generate only the benchmark dataset:
+
 ```bash
-python testing_agent/agent.py --data path\to\evaluation-test.jsonl --out-dir testing_agent\results --mode both --adapter-path path\to\adapter
+python testing_agent/new_agent.py --mode data
 ```
 
-## Notes
+Run the full real-model evaluation:
 
-- The fine-tuned model requires a LoRA adapter path.
-- `--cache-dir` can be used to place model downloads in a custom location.
-- The prompt template is the same as `scripts/training/comparison.py`.
+```bash
+python testing_agent/new_agent.py --mode all --adapter-path testing_agent/adapter
+```
+
+Smoke-test the workflow without loading model weights:
+
+```bash
+python testing_agent/new_agent.py --mode all --mock-model --out-dir testing_agent/results_mock
+```
+
+## Outputs
+
+Default dataset:
+
+```text
+testing_agent/data/cicd_failure_benchmark.jsonl
+```
+
+Default result files:
+
+```text
+testing_agent/results/base_model_fixes.jsonl
+testing_agent/results/finetuned_model_fixes.jsonl
+testing_agent/results/comparison_report.jsonl
+testing_agent/results/evaluation_report.json
+testing_agent/results/evaluation_report.md
+testing_agent/results/base_model_fixes/*.patch
+testing_agent/results/finetuned_model_fixes/*.patch
+```
+
+The fine-tuned run requires a valid PEFT adapter directory containing
+`adapter_config.json` and adapter weights.
 

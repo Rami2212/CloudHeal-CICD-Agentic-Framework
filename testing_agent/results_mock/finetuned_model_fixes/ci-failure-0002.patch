@@ -1,0 +1,14 @@
+diff --git a/src/cloudheal/remediator.py b/src/cloudheal/remediator.py
+--- a/src/cloudheal/remediator.py
++++ b/src/cloudheal/remediator.py
+@@ -1,6 +1,9 @@
+-def build_fix(log, context):
++from typing import Optional
++
++
++def build_fix(log: str, context: dict[str, str]) -> Optional[dict[str, str]]:
+     if "ModuleNotFoundError" in log:
+         return {"type": "pythonpath", "file": ".github/workflows/ci.yml"}
+     if context.get("workflow") == "docker":
+         return {"type": "dockerfile"}
++    return None
