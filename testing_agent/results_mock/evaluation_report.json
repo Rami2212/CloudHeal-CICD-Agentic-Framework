@@ -1,0 +1,620 @@
+{
+  "created_at": "2026-06-09T12:38:22.951803+00:00",
+  "metric_definitions": {
+    "accuracy": "Weighted heuristic score from expected fix keywords, target files, line similarity to the reference patch, patch format, and safety penalties.",
+    "resolution_success_rate": "Share of cases whose generated patch is patch-like and crosses the accuracy, file-path, keyword, and safety thresholds.",
+    "estimated_mttr_minutes": "Proxy MTTR: generation time plus expected human recovery time remaining after the model's accuracy score, with a penalty for likely unresolved cases."
+  },
+  "summary": {
+    "base": {
+      "cases": 10,
+      "accuracy": 0.539,
+      "resolution_success_rate": 0.0,
+      "mean_mttr_minutes": 51.33,
+      "median_mttr_minutes": 50.24,
+      "patch_like_rate": 0.0,
+      "mean_generation_seconds": 0.0,
+      "mean_file_path_score": 1.0,
+      "mean_keyword_score": 0.4667,
+      "mean_line_similarity": 0.6451
+    },
+    "finetuned": {
+      "cases": 10,
+      "accuracy": 1.0,
+      "resolution_success_rate": 1.0,
+      "mean_mttr_minutes": 4.0,
+      "median_mttr_minutes": 4.0,
+      "patch_like_rate": 1.0,
+      "mean_generation_seconds": 0.0,
+      "mean_file_path_score": 1.0,
+      "mean_keyword_score": 1.0,
+      "mean_line_similarity": 1.0
+    },
+    "delta_finetuned_minus_base": {
+      "accuracy": 0.461,
+      "resolution_success_rate": 1.0,
+      "mean_mttr_minutes": -47.33,
+      "patch_like_rate": 1.0
+    },
+    "winner_counts": {
+      "base": 0,
+      "finetuned": 10,
+      "tie": 0
+    },
+    "overall_winner": "finetuned"
+  },
+  "per_case": [
+    {
+      "id": "ci-failure-0001",
+      "category": "python-pytest-import-path",
+      "winner": "finetuned",
+      "reference_mttr_minutes": 25,
+      "base": {
+        "id": "ci-failure-0001",
+        "category": "python-pytest-import-path",
+        "model_variant": "base",
+        "accuracy": 0.4841,
+        "estimated_resolution_success": false,
+        "estimated_mttr_minutes": 51.02,
+        "line_similarity": 0.6957,
+        "patch_like": false,
+        "contains_markdown_fence": true,
+        "file_path_score": 1.0,
+        "keyword_score": 0.25,
+        "found_files": [
+          ".github/workflows/ci.yml"
+        ],
+        "found_keywords": [
+          "pytest"
+        ],
+        "missing_keywords": [
+          "PYTHONPATH",
+          "github.workspace",
+          "src"
+        ],
+        "dangerous_change_penalty": 0.0,
+        "generation_seconds": 0.0,
+        "patch_file": "C:\\Users\\LOQ\\Downloads\\Uni\\Research\\CloudHeal-CICD-Agentic-Framework\\testing_agent\\results_mock\\base_model_fixes\\ci-failure-0001.patch"
+      },
+      "finetuned": {
+        "id": "ci-failure-0001",
+        "category": "python-pytest-import-path",
+        "model_variant": "finetuned",
+        "accuracy": 1.0,
+        "estimated_resolution_success": true,
+        "estimated_mttr_minutes": 4.0,
+        "line_similarity": 1.0,
+        "patch_like": true,
+        "contains_markdown_fence": false,
+        "file_path_score": 1.0,
+        "keyword_score": 1.0,
+        "found_files": [
+          ".github/workflows/ci.yml"
+        ],
+        "found_keywords": [
+          "PYTHONPATH",
+          "github.workspace",
+          "src",
+          "pytest"
+        ],
+        "missing_keywords": [],
+        "dangerous_change_penalty": 0.0,
+        "generation_seconds": 0.0,
+        "patch_file": "C:\\Users\\LOQ\\Downloads\\Uni\\Research\\CloudHeal-CICD-Agentic-Framework\\testing_agent\\results_mock\\finetuned_model_fixes\\ci-failure-0001.patch"
+      }
+    },
+    {
+      "id": "ci-failure-0002",
+      "category": "python-mypy-type-hints",
+      "winner": "finetuned",
+      "reference_mttr_minutes": 35,
+      "base": {
+        "id": "ci-failure-0002",
+        "category": "python-mypy-type-hints",
+        "model_variant": "base",
+        "accuracy": 0.4635,
+        "estimated_resolution_success": false,
+        "estimated_mttr_minutes": 57.07,
+        "line_similarity": 0.5926,
+        "patch_like": false,
+        "contains_markdown_fence": true,
+        "file_path_score": 1.0,
+        "keyword_score": 0.25,
+        "found_files": [
+          "src/cloudheal/remediator.py"
+        ],
+        "found_keywords": [
+          "Optional"
+        ],
+        "missing_keywords": [
+          "dict[str, str]",
+          "return None",
+          "log: str"
+        ],
+        "dangerous_change_penalty": 0.0,
+        "generation_seconds": 0.0,
+        "patch_file": "C:\\Users\\LOQ\\Downloads\\Uni\\Research\\CloudHeal-CICD-Agentic-Framework\\testing_agent\\results_mock\\base_model_fixes\\ci-failure-0002.patch"
+      },
+      "finetuned": {
+        "id": "ci-failure-0002",
+        "category": "python-mypy-type-hints",
+        "model_variant": "finetuned",
+        "accuracy": 1.0,
+        "estimated_resolution_success": true,
+        "estimated_mttr_minutes": 4.0,
+        "line_similarity": 1.0,
+        "patch_like": true,
+        "contains_markdown_fence": false,
+        "file_path_score": 1.0,
+        "keyword_score": 1.0,
+        "found_files": [
+          "src/cloudheal/remediator.py"
+        ],
+        "found_keywords": [
+          "Optional",
+          "dict[str, str]",
+          "return None",
+          "log: str"
+        ],
+        "missing_keywords": [],
+        "dangerous_change_penalty": 0.0,
+        "generation_seconds": 0.0,
+        "patch_file": "C:\\Users\\LOQ\\Downloads\\Uni\\Research\\CloudHeal-CICD-Agentic-Framework\\testing_agent\\results_mock\\finetuned_model_fixes\\ci-failure-0002.patch"
+      }
+    },
+    {
+      "id": "ci-failure-0003",
+      "category": "frontend-npm-peer-dependency",
+      "winner": "finetuned",
+      "reference_mttr_minutes": 30,
+      "base": {
+        "id": "ci-failure-0003",
+        "category": "frontend-npm-peer-dependency",
+        "model_variant": "base",
+        "accuracy": 0.4033,
+        "estimated_resolution_success": false,
+        "estimated_mttr_minutes": 56.67,
+        "line_similarity": 0.6667,
+        "patch_like": false,
+        "contains_markdown_fence": true,
+        "file_path_score": 1.0,
+        "keyword_score": 0.0,
+        "found_files": [
+          ".github/workflows/frontend.yml"
+        ],
+        "found_keywords": [],
+        "missing_keywords": [
+          "npm ci --legacy-peer-deps",
+          "legacy-peer-deps"
+        ],
+        "dangerous_change_penalty": 0.0,
+        "generation_seconds": 0.0001,
+        "patch_file": "C:\\Users\\LOQ\\Downloads\\Uni\\Research\\CloudHeal-CICD-Agentic-Framework\\testing_agent\\results_mock\\base_model_fixes\\ci-failure-0003.patch"
+      },
+      "finetuned": {
+        "id": "ci-failure-0003",
+        "category": "frontend-npm-peer-dependency",
+        "model_variant": "finetuned",
+        "accuracy": 1.0,
+        "estimated_resolution_success": true,
+        "estimated_mttr_minutes": 4.0,
+        "line_similarity": 1.0,
+        "patch_like": true,
+        "contains_markdown_fence": false,
+        "file_path_score": 1.0,
+        "keyword_score": 1.0,
+        "found_files": [
+          ".github/workflows/frontend.yml"
+        ],
+        "found_keywords": [
+          "npm ci --legacy-peer-deps",
+          "legacy-peer-deps"
+        ],
+        "missing_keywords": [],
+        "dangerous_change_penalty": 0.0,
+        "generation_seconds": 0.0,
+        "patch_file": "C:\\Users\\LOQ\\Downloads\\Uni\\Research\\CloudHeal-CICD-Agentic-Framework\\testing_agent\\results_mock\\finetuned_model_fixes\\ci-failure-0003.patch"
+      }
+    },
+    {
+      "id": "ci-failure-0004",
+      "category": "docker-build-context",
+      "winner": "finetuned",
+      "reference_mttr_minutes": 20,
+      "base": {
+        "id": "ci-failure-0004",
+        "category": "docker-build-context",
+        "model_variant": "base",
+        "accuracy": 0.6033,
+        "estimated_resolution_success": false,
+        "estimated_mttr_minutes": 45.11,
+        "line_similarity": 0.6667,
+        "patch_like": false,
+        "contains_markdown_fence": true,
+        "file_path_score": 1.0,
+        "keyword_score": 0.6667,
+        "found_files": [
+          "Dockerfile"
+        ],
+        "found_keywords": [
+          "COPY",
+          "requirements.txt"
+        ],
+        "missing_keywords": [
+          "services/api/requirements.txt"
+        ],
+        "dangerous_change_penalty": 0.0,
+        "generation_seconds": 0.0,
+        "patch_file": "C:\\Users\\LOQ\\Downloads\\Uni\\Research\\CloudHeal-CICD-Agentic-Framework\\testing_agent\\results_mock\\base_model_fixes\\ci-failure-0004.patch"
+      },
+      "finetuned": {
+        "id": "ci-failure-0004",
+        "category": "docker-build-context",
+        "model_variant": "finetuned",
+        "accuracy": 1.0,
+        "estimated_resolution_success": true,
+        "estimated_mttr_minutes": 4.0,
+        "line_similarity": 1.0,
+        "patch_like": true,
+        "contains_markdown_fence": false,
+        "file_path_score": 1.0,
+        "keyword_score": 1.0,
+        "found_files": [
+          "Dockerfile"
+        ],
+        "found_keywords": [
+          "services/api/requirements.txt",
+          "COPY",
+          "requirements.txt"
+        ],
+        "missing_keywords": [],
+        "dangerous_change_penalty": 0.0,
+        "generation_seconds": 0.0,
+        "patch_file": "C:\\Users\\LOQ\\Downloads\\Uni\\Research\\CloudHeal-CICD-Agentic-Framework\\testing_agent\\results_mock\\finetuned_model_fixes\\ci-failure-0004.patch"
+      }
+    },
+    {
+      "id": "ci-failure-0005",
+      "category": "terraform-aws-provider-v4",
+      "winner": "finetuned",
+      "reference_mttr_minutes": 45,
+      "base": {
+        "id": "ci-failure-0005",
+        "category": "terraform-aws-provider-v4",
+        "model_variant": "base",
+        "accuracy": 0.4931,
+        "estimated_resolution_success": false,
+        "estimated_mttr_minutes": 60.87,
+        "line_similarity": 0.6154,
+        "patch_like": false,
+        "contains_markdown_fence": true,
+        "file_path_score": 1.0,
+        "keyword_score": 0.3333,
+        "found_files": [
+          "infra/s3.tf"
+        ],
+        "found_keywords": [
+          "private"
+        ],
+        "missing_keywords": [
+          "aws_s3_bucket_acl",
+          "aws_s3_bucket.artifacts.id"
+        ],
+        "dangerous_change_penalty": 0.0,
+        "generation_seconds": 0.0,
+        "patch_file": "C:\\Users\\LOQ\\Downloads\\Uni\\Research\\CloudHeal-CICD-Agentic-Framework\\testing_agent\\results_mock\\base_model_fixes\\ci-failure-0005.patch"
+      },
+      "finetuned": {
+        "id": "ci-failure-0005",
+        "category": "terraform-aws-provider-v4",
+        "model_variant": "finetuned",
+        "accuracy": 1.0,
+        "estimated_resolution_success": true,
+        "estimated_mttr_minutes": 4.0,
+        "line_similarity": 1.0,
+        "patch_like": true,
+        "contains_markdown_fence": false,
+        "file_path_score": 1.0,
+        "keyword_score": 1.0,
+        "found_files": [
+          "infra/s3.tf"
+        ],
+        "found_keywords": [
+          "aws_s3_bucket_acl",
+          "aws_s3_bucket.artifacts.id",
+          "private"
+        ],
+        "missing_keywords": [],
+        "dangerous_change_penalty": 0.0,
+        "generation_seconds": 0.0,
+        "patch_file": "C:\\Users\\LOQ\\Downloads\\Uni\\Research\\CloudHeal-CICD-Agentic-Framework\\testing_agent\\results_mock\\finetuned_model_fixes\\ci-failure-0005.patch"
+      }
+    },
+    {
+      "id": "ci-failure-0006",
+      "category": "maven-java-version",
+      "winner": "finetuned",
+      "reference_mttr_minutes": 25,
+      "base": {
+        "id": "ci-failure-0006",
+        "category": "maven-java-version",
+        "model_variant": "base",
+        "accuracy": 0.6155,
+        "estimated_resolution_success": false,
+        "estimated_mttr_minutes": 46.69,
+        "line_similarity": 0.7273,
+        "patch_like": false,
+        "contains_markdown_fence": true,
+        "file_path_score": 1.0,
+        "keyword_score": 0.6667,
+        "found_files": [
+          ".github/workflows/java.yml"
+        ],
+        "found_keywords": [
+          "java-version: \"21\"",
+          "distribution: temurin"
+        ],
+        "missing_keywords": [
+          "mvn -B test"
+        ],
+        "dangerous_change_penalty": 0.0,
+        "generation_seconds": 0.0,
+        "patch_file": "C:\\Users\\LOQ\\Downloads\\Uni\\Research\\CloudHeal-CICD-Agentic-Framework\\testing_agent\\results_mock\\base_model_fixes\\ci-failure-0006.patch"
+      },
+      "finetuned": {
+        "id": "ci-failure-0006",
+        "category": "maven-java-version",
+        "model_variant": "finetuned",
+        "accuracy": 1.0,
+        "estimated_resolution_success": true,
+        "estimated_mttr_minutes": 4.0,
+        "line_similarity": 1.0,
+        "patch_like": true,
+        "contains_markdown_fence": false,
+        "file_path_score": 1.0,
+        "keyword_score": 1.0,
+        "found_files": [
+          ".github/workflows/java.yml"
+        ],
+        "found_keywords": [
+          "java-version: \"21\"",
+          "distribution: temurin",
+          "mvn -B test"
+        ],
+        "missing_keywords": [],
+        "dangerous_change_penalty": 0.0,
+        "generation_seconds": 0.0,
+        "patch_file": "C:\\Users\\LOQ\\Downloads\\Uni\\Research\\CloudHeal-CICD-Agentic-Framework\\testing_agent\\results_mock\\finetuned_model_fixes\\ci-failure-0006.patch"
+      }
+    },
+    {
+      "id": "ci-failure-0007",
+      "category": "eslint-react-no-undef",
+      "winner": "finetuned",
+      "reference_mttr_minutes": 15,
+      "base": {
+        "id": "ci-failure-0007",
+        "category": "eslint-react-no-undef",
+        "model_variant": "base",
+        "accuracy": 0.7155,
+        "estimated_resolution_success": false,
+        "estimated_mttr_minutes": 40.54,
+        "line_similarity": 0.7273,
+        "patch_like": false,
+        "contains_markdown_fence": true,
+        "file_path_score": 1.0,
+        "keyword_score": 1.0,
+        "found_files": [
+          "src/components/StatusBadge.jsx"
+        ],
+        "found_keywords": [
+          "import React",
+          "StatusBadge",
+          "react"
+        ],
+        "missing_keywords": [],
+        "dangerous_change_penalty": 0.0,
+        "generation_seconds": 0.0,
+        "patch_file": "C:\\Users\\LOQ\\Downloads\\Uni\\Research\\CloudHeal-CICD-Agentic-Framework\\testing_agent\\results_mock\\base_model_fixes\\ci-failure-0007.patch"
+      },
+      "finetuned": {
+        "id": "ci-failure-0007",
+        "category": "eslint-react-no-undef",
+        "model_variant": "finetuned",
+        "accuracy": 1.0,
+        "estimated_resolution_success": true,
+        "estimated_mttr_minutes": 4.0,
+        "line_similarity": 1.0,
+        "patch_like": true,
+        "contains_markdown_fence": false,
+        "file_path_score": 1.0,
+        "keyword_score": 1.0,
+        "found_files": [
+          "src/components/StatusBadge.jsx"
+        ],
+        "found_keywords": [
+          "import React",
+          "StatusBadge",
+          "react"
+        ],
+        "missing_keywords": [],
+        "dangerous_change_penalty": 0.0,
+        "generation_seconds": 0.0,
+        "patch_file": "C:\\Users\\LOQ\\Downloads\\Uni\\Research\\CloudHeal-CICD-Agentic-Framework\\testing_agent\\results_mock\\finetuned_model_fixes\\ci-failure-0007.patch"
+      }
+    },
+    {
+      "id": "ci-failure-0008",
+      "category": "kubernetes-hpa-api-version",
+      "winner": "finetuned",
+      "reference_mttr_minutes": 40,
+      "base": {
+        "id": "ci-failure-0008",
+        "category": "kubernetes-hpa-api-version",
+        "model_variant": "base",
+        "accuracy": 0.4803,
+        "estimated_resolution_success": false,
+        "estimated_mttr_minutes": 58.95,
+        "line_similarity": 0.5517,
+        "patch_like": false,
+        "contains_markdown_fence": true,
+        "file_path_score": 1.0,
+        "keyword_score": 0.3333,
+        "found_files": [
+          "k8s/hpa.yaml"
+        ],
+        "found_keywords": [
+          "autoscaling/v2"
+        ],
+        "missing_keywords": [
+          "target:",
+          "averageUtilization: 70"
+        ],
+        "dangerous_change_penalty": 0.0,
+        "generation_seconds": 0.0,
+        "patch_file": "C:\\Users\\LOQ\\Downloads\\Uni\\Research\\CloudHeal-CICD-Agentic-Framework\\testing_agent\\results_mock\\base_model_fixes\\ci-failure-0008.patch"
+      },
+      "finetuned": {
+        "id": "ci-failure-0008",
+        "category": "kubernetes-hpa-api-version",
+        "model_variant": "finetuned",
+        "accuracy": 1.0,
+        "estimated_resolution_success": true,
+        "estimated_mttr_minutes": 4.0,
+        "line_similarity": 1.0,
+        "patch_like": true,
+        "contains_markdown_fence": false,
+        "file_path_score": 1.0,
+        "keyword_score": 1.0,
+        "found_files": [
+          "k8s/hpa.yaml"
+        ],
+        "found_keywords": [
+          "autoscaling/v2",
+          "target:",
+          "averageUtilization: 70"
+        ],
+        "missing_keywords": [],
+        "dangerous_change_penalty": 0.0,
+        "generation_seconds": 0.0,
+        "patch_file": "C:\\Users\\LOQ\\Downloads\\Uni\\Research\\CloudHeal-CICD-Agentic-Framework\\testing_agent\\results_mock\\finetuned_model_fixes\\ci-failure-0008.patch"
+      }
+    },
+    {
+      "id": "ci-failure-0009",
+      "category": "github-actions-release-permissions",
+      "winner": "finetuned",
+      "reference_mttr_minutes": 30,
+      "base": {
+        "id": "ci-failure-0009",
+        "category": "github-actions-release-permissions",
+        "model_variant": "base",
+        "accuracy": 0.5931,
+        "estimated_resolution_success": false,
+        "estimated_mttr_minutes": 49.46,
+        "line_similarity": 0.6154,
+        "patch_like": false,
+        "contains_markdown_fence": true,
+        "file_path_score": 1.0,
+        "keyword_score": 0.6667,
+        "found_files": [
+          ".github/workflows/release.yml"
+        ],
+        "found_keywords": [
+          "permissions:",
+          "workflow_dispatch"
+        ],
+        "missing_keywords": [
+          "contents: write"
+        ],
+        "dangerous_change_penalty": 0.0,
+        "generation_seconds": 0.0,
+        "patch_file": "C:\\Users\\LOQ\\Downloads\\Uni\\Research\\CloudHeal-CICD-Agentic-Framework\\testing_agent\\results_mock\\base_model_fixes\\ci-failure-0009.patch"
+      },
+      "finetuned": {
+        "id": "ci-failure-0009",
+        "category": "github-actions-release-permissions",
+        "model_variant": "finetuned",
+        "accuracy": 1.0,
+        "estimated_resolution_success": true,
+        "estimated_mttr_minutes": 4.0,
+        "line_similarity": 1.0,
+        "patch_like": true,
+        "contains_markdown_fence": false,
+        "file_path_score": 1.0,
+        "keyword_score": 1.0,
+        "found_files": [
+          ".github/workflows/release.yml"
+        ],
+        "found_keywords": [
+          "permissions:",
+          "contents: write",
+          "workflow_dispatch"
+        ],
+        "missing_keywords": [],
+        "dangerous_change_penalty": 0.0,
+        "generation_seconds": 0.0,
+        "patch_file": "C:\\Users\\LOQ\\Downloads\\Uni\\Research\\CloudHeal-CICD-Agentic-Framework\\testing_agent\\results_mock\\finetuned_model_fixes\\ci-failure-0009.patch"
+      }
+    },
+    {
+      "id": "ci-failure-0010",
+      "category": "helm-yaml-indentation",
+      "winner": "finetuned",
+      "reference_mttr_minutes": 20,
+      "base": {
+        "id": "ci-failure-0010",
+        "category": "helm-yaml-indentation",
+        "model_variant": "base",
+        "accuracy": 0.5385,
+        "estimated_resolution_success": false,
+        "estimated_mttr_minutes": 46.92,
+        "line_similarity": 0.5926,
+        "patch_like": false,
+        "contains_markdown_fence": true,
+        "file_path_score": 1.0,
+        "keyword_score": 0.5,
+        "found_files": [
+          "charts/cloudheal/values.yaml"
+        ],
+        "found_keywords": [
+          "limits:",
+          "cpu: 500m"
+        ],
+        "missing_keywords": [
+          "memory: 512Mi",
+          "    cpu"
+        ],
+        "dangerous_change_penalty": 0.0,
+        "generation_seconds": 0.0,
+        "patch_file": "C:\\Users\\LOQ\\Downloads\\Uni\\Research\\CloudHeal-CICD-Agentic-Framework\\testing_agent\\results_mock\\base_model_fixes\\ci-failure-0010.patch"
+      },
+      "finetuned": {
+        "id": "ci-failure-0010",
+        "category": "helm-yaml-indentation",
+        "model_variant": "finetuned",
+        "accuracy": 1.0,
+        "estimated_resolution_success": true,
+        "estimated_mttr_minutes": 4.0,
+        "line_similarity": 1.0,
+        "patch_like": true,
+        "contains_markdown_fence": false,
+        "file_path_score": 1.0,
+        "keyword_score": 1.0,
+        "found_files": [
+          "charts/cloudheal/values.yaml"
+        ],
+        "found_keywords": [
+          "limits:",
+          "cpu: 500m",
+          "memory: 512Mi",
+          "    cpu"
+        ],
+        "missing_keywords": [],
+        "dangerous_change_penalty": 0.0,
+        "generation_seconds": 0.0,
+        "patch_file": "C:\\Users\\LOQ\\Downloads\\Uni\\Research\\CloudHeal-CICD-Agentic-Framework\\testing_agent\\results_mock\\finetuned_model_fixes\\ci-failure-0010.patch"
+      }
+    }
+  ]
+}

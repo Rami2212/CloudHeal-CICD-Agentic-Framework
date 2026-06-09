@@ -1,0 +1,9 @@
+diff --git a/.github/workflows/java.yml b/.github/workflows/java.yml
+--- a/.github/workflows/java.yml
++++ b/.github/workflows/java.yml
+@@ -9,5 +9,5 @@ jobs:
+         with:
+           distribution: temurin
+-          java-version: "17"
++          java-version: "21"
+       - run: mvn -B test
