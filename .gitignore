@@ -229,3 +229,4 @@ server_upload/data/val.jsonl
 server_upload/data/test.jsonl
 server_upload/output/
 server_upload/results/
+testing_agent/adapter/
