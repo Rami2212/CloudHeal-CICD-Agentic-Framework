@@ -34,8 +34,20 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent
+# ----------------------------------------------------------------------
+# Colab-safe path setup
+# ----------------------------------------------------------------------
+
+from pathlib import Path
+
+try:
+    # Works when running as a normal .py file
+    SCRIPT_DIR = Path(__file__).resolve().parent
+except NameError:
+    # Works in Google Colab / Jupyter Notebook
+    SCRIPT_DIR = Path.cwd()
+
+REPO_ROOT = SCRIPT_DIR
 DEFAULT_DATA_PATH = SCRIPT_DIR / "data" / "cicd_failure_benchmark.jsonl"
 DEFAULT_RESULTS_DIR = SCRIPT_DIR / "results"
 DEFAULT_BASE_MODEL = "Qwen/Qwen2.5-Coder-7B-Instruct"
@@ -741,6 +753,7 @@ class HFModelRunner:
         kwargs: Dict[str, Any] = {
             "device_map": self.config.device_map,
             "cache_dir": str(self.config.cache_dir) if self.config.cache_dir else None,
+             "offload_folder": "/tmp/cloudheal_offload",
         }
         dtype = self._resolve_dtype()
         if dtype is not None:
@@ -1388,8 +1401,8 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Store full system/user prompts in the generated output JSONL files.",
     )
-    return parser.parse_args()
-
+    args, unknown = parser.parse_known_args()
+    return args
 
 def main() -> None:
     args = parse_args()
