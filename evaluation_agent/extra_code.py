@@ -1,158 +1,367 @@
 # ============================================================
 #  CI/CD Fix-Generation Evaluation Pipeline
-#  Paste each cell into a Google Colab notebook in order.
+#
+#  Purpose:
+#    Evaluate two models using CodeBLEU following Ren et al. (2020)
+#
+#  Models compared:
+#    1. Base model
+#    2. Fine-tuned LoRA adapter model
+#
+#  Metric:
+#    CodeBLEU = α·BLEU + β·BLEUweight + γ·Match_ast + δ·Match_df
+#
+#  Recommended general CodeBLEU weights:
+#    α = 0.10
+#    β = 0.10
+#    γ = 0.40
+#    δ = 0.40
+#
+#  Paper:
+#    CodeBLEU: a Method for Automatic Evaluation of Code Synthesis
+#    Ren et al., 2020
 # ============================================================
 
 
 # ── CELL 1: Install dependencies ────────────────────────────
-# !pip install -q transformers peft bitsandbytes accelerate datasets difflib codebleu
-# Optional but recommended for all 4 CodeBLEU terms:
-# !pip install -q tree_sitter tree_sitter_languages
+
+#!pip install -q transformers peft bitsandbytes accelerate datasets
+#!pip install -q codebleu
 
 
 # ── CELL 2: Imports ─────────────────────────────────────────
-import os, re, ast, json, math, textwrap, inspect, difflib, subprocess, tempfile
-from dataclasses import dataclass, field
+
+import os
+import re
+import json
+import inspect
+from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, Tuple
-from collections import Counter
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, GenerationConfig
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    GenerationConfig,
+)
 from peft import PeftModel, LoraConfig
 from datasets import load_dataset
 
+from codebleu import calc_codebleu
+
 
 # ── CELL 3: Config ──────────────────────────────────────────
+
 @dataclass
 class Config:
-    # Model
-    base_model:     str  = "Qwen/Qwen2.5-Coder-7B-Instruct"
-    adapter_path:   str  = "./adapter"
-    cache_dir:      Optional[str] = None
-    torch_dtype:    str  = "float16"
-    load_in_4bit:   bool = True
-    offload_folder: str  = "/tmp/offload"
-    # Dataset
-    dataset_name:   str  = "JetBrains-Research/diff-xyz"
-    dataset_split:  str  = "test"
-    filter_lang:    Optional[str] = "python"   # None = all languages
-    max_samples:    int  = 50                  # 0 = use all rows
-    diff_format:    str  = "udiff"
-    # Generation
-    max_new_tokens: int  = 512
-    # Evaluation
-    pass_k:         int  = 1
-    n_candidates:   int  = 1   # samples per prompt (>1 needs do_sample=True)
-    save_report:    str  = "eval_report.json"
+    # Model configuration
+    base_model: str = "Qwen/Qwen2.5-Coder-7B-Instruct"
+    adapter_path: str = "./adapter"
+
+    # Optional cache/offload settings
+    cache_dir: Optional[str] = None
+    torch_dtype: str = "float16"
+    load_in_4bit: bool = True
+    offload_folder: str = "/tmp/offload"
+
+    # Dataset configuration
+    dataset_name: str = "JetBrains-Research/diff-xyz"
+    dataset_split: str = "test"
+
+    # Use "python" if your generated/reference code is Python.
+    # Set to None if you want all languages, but CodeBLEU language support must match.
+    filter_lang: Optional[str] = "python"
+
+    # 0 means use all records.
+    max_samples: int = 50
+
+    # Dataset diff field. This is kept from your previous script.
+    diff_format: str = "udiff"
+
+    # Generation configuration
+    max_new_tokens: int = 512
+
+    # Output report file
+    save_report: str = "eval_report_codebleu.json"
 
 
 CFG = Config()
 
 
 # ── CELL 4: Model utilities ─────────────────────────────────
-def _resolve_dtype(name: str) -> torch.dtype:
-    return {"float16": torch.float16, "bfloat16": torch.bfloat16,
-            "float32": torch.float32}.get(name.lower(), torch.float16)
 
-def _get_device(model) -> torch.device:
-    try:    return next(model.parameters()).device
-    except: return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def resolve_dtype(name: str) -> torch.dtype:
+    """
+    Convert string dtype name into a torch dtype.
+    """
+    dtype_map = {
+        "float16": torch.float16,
+        "bfloat16": torch.bfloat16,
+        "float32": torch.float32,
+    }
+    return dtype_map.get(name.lower(), torch.float16)
 
-def _free_gpu():
+
+def get_model_device(model) -> torch.device:
+    """
+    Return the device where the model is currently placed.
+    """
+    try:
+        return next(model.parameters()).device
+    except StopIteration:
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def free_gpu_memory() -> None:
+    """
+    Clear CUDA cache to reduce memory pressure between model operations.
+    """
     if torch.cuda.is_available():
-        torch.cuda.empty_cache(); torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
 
-def _free_vram() -> int:
-    if not torch.cuda.is_available(): return 0
-    free, _ = torch.cuda.mem_get_info(0)
-    return free
 
-def _patch_adapter_config(path: str):
-    cfg_path = os.path.join(path, "adapter_config.json")
-    if not os.path.exists(cfg_path): return
-    with open(cfg_path) as f: cfg = json.load(f)
-    valid = set(inspect.signature(LoraConfig.__init__).parameters) - {"self"}
-    bad   = [k for k in cfg if k not in valid]
-    if bad:
-        print(f"[adapter] Removing unknown keys: {bad}")
-        with open(cfg_path + ".bak", "w") as f: json.dump(cfg, f, indent=2)
-        with open(cfg_path, "w") as f: json.dump({k:v for k,v in cfg.items() if k in valid}, f, indent=2)
+def get_free_vram() -> int:
+    """
+    Return free GPU memory in bytes.
+    """
+    if not torch.cuda.is_available():
+        return 0
 
-def _clean_gen_config(model):
-    try:    pad, eos, bos = model.generation_config.pad_token_id, model.generation_config.eos_token_id, model.generation_config.bos_token_id
-    except: pad = eos = bos = None
+    free_memory, _ = torch.cuda.mem_get_info(0)
+    return free_memory
+
+
+def patch_adapter_config(adapter_path: str) -> None:
+    """
+    Some PEFT adapter_config.json files may contain keys that are not accepted
+    by the installed PEFT version. This function removes unsupported keys.
+
+    It also creates a backup file:
+        adapter_config.json.bak
+    """
+    config_path = os.path.join(adapter_path, "adapter_config.json")
+
+    if not os.path.exists(config_path):
+        return
+
+    with open(config_path, "r", encoding="utf-8") as file:
+        adapter_config = json.load(file)
+
+    valid_keys = set(inspect.signature(LoraConfig.__init__).parameters) - {"self"}
+    invalid_keys = [key for key in adapter_config if key not in valid_keys]
+
+    if invalid_keys:
+        print(f"[adapter] Removing unsupported adapter config keys: {invalid_keys}")
+
+        with open(config_path + ".bak", "w", encoding="utf-8") as file:
+            json.dump(adapter_config, file, indent=2)
+
+        cleaned_config = {
+            key: value
+            for key, value in adapter_config.items()
+            if key in valid_keys
+        }
+
+        with open(config_path, "w", encoding="utf-8") as file:
+            json.dump(cleaned_config, file, indent=2)
+
+
+def clean_generation_config(model) -> None:
+    """
+    Replace model generation config with a controlled deterministic setup.
+    This helps make base vs fine-tuned comparison fair.
+    """
+    try:
+        pad_token_id = model.generation_config.pad_token_id
+    except Exception:
+        pad_token_id = None
+
+    try:
+        eos_token_id = model.generation_config.eos_token_id
+    except Exception:
+        eos_token_id = None
+
+    try:
+        bos_token_id = model.generation_config.bos_token_id
+    except Exception:
+        bos_token_id = None
+
     model.generation_config = GenerationConfig(
-        do_sample=False, repetition_penalty=1.1,
-        pad_token_id=pad, eos_token_id=eos, bos_token_id=bos)
+        do_sample=False,
+        repetition_penalty=1.1,
+        pad_token_id=pad_token_id,
+        eos_token_id=eos_token_id,
+        bos_token_id=bos_token_id,
+    )
 
-def _build_bnb():
-    return BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_use_double_quant=True,
-                               bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.float16)
+
+def build_bitsandbytes_config() -> BitsAndBytesConfig:
+    """
+    Build 4-bit quantization config for memory-efficient model loading.
+    """
+    return BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.float16,
+    )
+
 
 def load_tokenizer(cfg: Config):
-    tok = AutoTokenizer.from_pretrained(cfg.base_model, use_fast=True, cache_dir=cfg.cache_dir)
-    if tok.pad_token is None: tok.pad_token = tok.eos_token
-    return tok
+    """
+    Load tokenizer for the base model.
+    """
+    tokenizer = AutoTokenizer.from_pretrained(
+        cfg.base_model,
+        use_fast=True,
+        cache_dir=cfg.cache_dir,
+    )
+
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    return tokenizer
+
 
 def load_base_model(cfg: Config):
-    os.makedirs(cfg.offload_folder, exist_ok=True); _free_gpu()
-    free = _get_free_vram(); reserve = int(3.0 * 1024**3)
-    usable = max(0, free - reserve)
-    # Rough size estimate: 7B params × 0.5 bytes (4-bit) ≈ 3.5 GB + overhead
-    fit_on_gpu = usable >= int(4.5 * 1024**3)
+    """
+    Load the base model.
 
-    if cfg.load_in_4bit and fit_on_gpu:
+    Strategy:
+      - If enough GPU memory is available, load in 4-bit fully on GPU.
+      - Otherwise, use automatic device mapping with CPU offloading.
+    """
+    os.makedirs(cfg.offload_folder, exist_ok=True)
+    free_gpu_memory()
+
+    free_vram = get_free_vram()
+    usable_vram = max(0, free_vram - int(3.0 * 1024**3))
+    can_fit_4bit_on_gpu = usable_vram >= int(4.5 * 1024**3)
+
+    if cfg.load_in_4bit and can_fit_4bit_on_gpu:
         print("[load] Strategy: 4-bit NF4 fully on GPU")
-        model = AutoModelForCausalLM.from_pretrained(
-            cfg.base_model, device_map={"": 0}, cache_dir=cfg.cache_dir,
-            low_cpu_mem_usage=True, quantization_config=_build_bnb())
-    else:
-        print("[load] Strategy: fp16 with auto device_map")
-        model = AutoModelForCausalLM.from_pretrained(
-            cfg.base_model, device_map="auto",
-            torch_dtype=_resolve_dtype(cfg.torch_dtype),
-            cache_dir=cfg.cache_dir, low_cpu_mem_usage=True,
-            max_memory={0: int(free * 0.85), "cpu": "48GiB"},
-            offload_folder=cfg.offload_folder)
 
-    model.eval(); _clean_gen_config(model); _free_gpu()
+        model = AutoModelForCausalLM.from_pretrained(
+            cfg.base_model,
+            device_map={"": 0},
+            cache_dir=cfg.cache_dir,
+            low_cpu_mem_usage=True,
+            quantization_config=build_bitsandbytes_config(),
+        )
+    else:
+        print("[load] Strategy: fp16/bf16 with auto device_map and CPU offload")
+
+        max_memory = None
+        if torch.cuda.is_available():
+            max_memory = {
+                0: int(free_vram * 0.85),
+                "cpu": "48GiB",
+            }
+
+        model = AutoModelForCausalLM.from_pretrained(
+            cfg.base_model,
+            device_map="auto",
+            torch_dtype=resolve_dtype(cfg.torch_dtype),
+            cache_dir=cfg.cache_dir,
+            low_cpu_mem_usage=True,
+            max_memory=max_memory,
+            offload_folder=cfg.offload_folder,
+        )
+
+    model.eval()
+    clean_generation_config(model)
+    free_gpu_memory()
+
     return model
 
-def load_peft_model(base, cfg: Config):
-    _patch_adapter_config(cfg.adapter_path); _free_gpu()
-    ft = PeftModel.from_pretrained(base, cfg.adapter_path, is_trainable=False)
-    ft.eval(); _clean_gen_config(ft); _free_gpu()
-    return ft
+
+def load_peft_model(base_model, cfg: Config):
+    """
+    Load the fine-tuned LoRA adapter on top of the base model.
+    """
+    patch_adapter_config(cfg.adapter_path)
+    free_gpu_memory()
+
+    fine_tuned_model = PeftModel.from_pretrained(
+        base_model,
+        cfg.adapter_path,
+        is_trainable=False,
+    )
+
+    fine_tuned_model.eval()
+    clean_generation_config(fine_tuned_model)
+    free_gpu_memory()
+
+    return fine_tuned_model
 
 
 # ── CELL 5: Dataset preparation ─────────────────────────────
-DIFF_FIELDS = {"udiff", "udiff-h", "udiff-l", "search-replace"}
 
-def build_record(ex: dict, fmt: str) -> dict:
+def build_record(example: dict, diff_format: str) -> dict:
+    """
+    Convert one dataset row into a normalized evaluation record.
+    """
+    repo = example.get("repo")
+    commit = str(example.get("commit", ""))[:10]
+    path = example.get("path")
+
     return {
-        "id":             f"{ex.get('repo')}::{str(ex.get('commit',''))[:10]}::{ex.get('path')}",
-        "language":       ex.get("lang"),
-        "context":        (ex.get("message") or "").strip(),
-        "input_code":     ex.get("old_code", ""),
-        "reference_code": ex.get("new_code", ""),
-        "reference_diff": ex.get(fmt, ""),
+        "id": f"{repo}::{commit}::{path}",
+        "language": example.get("lang"),
+        "context": (example.get("message") or "").strip(),
+        "input_code": example.get("old_code", ""),
+        "reference_code": example.get("new_code", ""),
+        "reference_diff": example.get(diff_format, ""),
     }
 
+
 def load_eval_dataset(cfg: Config) -> List[dict]:
-    print(f"Loading {cfg.dataset_name} split={cfg.dataset_split} ...")
-    ds = load_dataset(cfg.dataset_name, "default", split=cfg.dataset_split)
+    """
+    Load and prepare the evaluation dataset.
+    """
+    print(f"Loading dataset: {cfg.dataset_name}, split={cfg.dataset_split}")
+
+    dataset = load_dataset(
+        cfg.dataset_name,
+        "default",
+        split=cfg.dataset_split,
+    )
+
     if cfg.filter_lang:
-        ds = ds.filter(lambda x: x.get("lang") == cfg.filter_lang)
+        dataset = dataset.filter(
+            lambda row: row.get("lang") == cfg.filter_lang
+        )
+
     if cfg.max_samples > 0:
-        ds = ds.select(range(min(cfg.max_samples, len(ds))))
-    records = [build_record(ex, cfg.diff_format) for ex in ds]
-    records = [r for r in records if r["input_code"] and r["reference_code"]]
-    print(f"Prepared {len(records)} records.")
+        dataset = dataset.select(
+            range(min(cfg.max_samples, len(dataset)))
+        )
+
+    records = [
+        build_record(example, cfg.diff_format)
+        for example in dataset
+    ]
+
+    records = [
+        record
+        for record in records
+        if record["input_code"] and record["reference_code"]
+    ]
+
+    print(f"Prepared {len(records)} evaluation records.")
     return records
 
 
-# ── CELL 6: Generation ──────────────────────────────────────
-def _build_prompt(input_code: str, context: str) -> str:
+# ── CELL 6: Generation utilities ────────────────────────────
+
+def build_prompt(input_code: str, context: str) -> str:
+    """
+    Build the prompt for CI/CD fix generation.
+
+    The model is instructed to return only corrected Python code.
+    """
     return (
         "You are an expert software engineer specialising in CI/CD pipeline fixes.\n\n"
         f"Task:\n{context}\n\n"
@@ -161,274 +370,448 @@ def _build_prompt(input_code: str, context: str) -> str:
         "No explanation, no commentary."
     )
 
-def _extract_code(text: str) -> str:
-    m = re.search(r"```(?:python)?\s*\n(.*?)```", text, re.DOTALL)
-    if m: return m.group(1).strip()
-    return "\n".join(l for l in text.strip().splitlines() if l.strip())
 
-def generate_fix(model, tokenizer, input_code: str, context: str, cfg: Config) -> str:
-    prompt  = _build_prompt(input_code, context)
-    inputs  = tokenizer(prompt, return_tensors="pt", truncation=True, padding=True)
-    device  = _get_device(model)
-    inputs  = {k: v.to(device) for k, v in inputs.items()}
+def extract_code_from_response(text: str) -> str:
+    """
+    Extract code from a model response.
+
+    If the model returns a fenced Python block, that block is used.
+    Otherwise, non-empty lines from the response are returned.
+    """
+    match = re.search(
+        r"```(?:python)?\s*\n(.*?)```",
+        text,
+        re.DOTALL,
+    )
+
+    if match:
+        return match.group(1).strip()
+
+    return "\n".join(
+        line
+        for line in text.strip().splitlines()
+        if line.strip()
+    )
+
+
+def generate_fix(
+    model,
+    tokenizer,
+    input_code: str,
+    context: str,
+    cfg: Config,
+) -> str:
+    """
+    Generate corrected code from the given model.
+    """
+    prompt = build_prompt(input_code, context)
+
+    inputs = tokenizer(
+        prompt,
+        return_tensors="pt",
+        truncation=True,
+        padding=True,
+    )
+
+    device = get_model_device(model)
+    inputs = {
+        key: value.to(device)
+        for key, value in inputs.items()
+    }
+
     with torch.no_grad():
-        out = model.generate(
-            **inputs, max_new_tokens=cfg.max_new_tokens,
-            do_sample=False, repetition_penalty=1.1,
+        output = model.generate(
+            **inputs,
+            max_new_tokens=cfg.max_new_tokens,
+            do_sample=False,
+            repetition_penalty=1.1,
             pad_token_id=tokenizer.pad_token_id,
-            eos_token_id=tokenizer.eos_token_id)
-    raw = tokenizer.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
-    return _extract_code(raw)
+            eos_token_id=tokenizer.eos_token_id,
+        )
+
+    generated_text = tokenizer.decode(
+        output[0][inputs["input_ids"].shape[1]:],
+        skip_special_tokens=True,
+    )
+
+    return extract_code_from_response(generated_text)
 
 
-# ── CELL 7: Metrics ─────────────────────────────────────────
+# ── CELL 7: CodeBLEU evaluation utilities ───────────────────
 
-# — pass@k (Chen et al. 2021, arXiv:2107.03374) —
-def normalize_code(code: str) -> str:
-    lines = [l.rstrip() for l in code.strip().splitlines()]
-    return "\n".join(l for l in lines if l.strip())
+CODEBLEU_WEIGHTS: Tuple[float, float, float, float] = (
+    0.10,
+    0.10,
+    0.40,
+    0.40,
+)
 
-def is_correct(cand: str, ref: str) -> bool:
-    return normalize_code(cand) == normalize_code(ref)
-
-def pass_at_k(n: int, c: int, k: int) -> float:
-    if n == 0: return 0.0
-    k = min(k, n)
-    if n - c < k: return 1.0
-    return 1.0 - math.comb(n - c, k) / math.comb(n, k)
-
-# — Syntax validity (diagnostic only) —
-def syntax_valid(code: str, lang: str = "python") -> bool:
-    if (lang or "").lower() == "python":
-        try: ast.parse(code); return True
-        except SyntaxError: return False
-    pairs = {"(":")", "[":"]", "{":"}"}; closing = set(pairs.values()); stack = []
-    for ch in code:
-        if ch in pairs: stack.append(pairs[ch])
-        elif ch in closing:
-            if not stack or stack.pop() != ch: return False
-    return not stack
-
-# — CodeBLEU (Ren et al. 2020, arXiv:2009.10297) —
-PY_KEYWORDS = {
-    "False","None","True","and","as","assert","async","await","break","class",
-    "continue","def","del","elif","else","except","finally","for","from",
-    "global","if","import","in","is","lambda","nonlocal","not","or","pass",
-    "raise","return","try","while","with","yield",
+CODEBLEU_SUPPORTED_LANGUAGES = {
+    "python",
+    "java",
+    "javascript",
+    "php",
+    "ruby",
+    "go",
+    "c_sharp",
+    "c",
+    "cpp",
 }
 
-def _tokenize(code: str) -> List[str]:
+CODEBLEU_LANGUAGE_ALIASES = {
+    "py": "python",
+    "python3": "python",
+    "js": "javascript",
+    "jsx": "javascript",
+    "ts": "javascript",
+    "tsx": "javascript",
+    "c#": "c_sharp",
+    "csharp": "c_sharp",
+    "cs": "c_sharp",
+    "c++": "cpp",
+    "cc": "cpp",
+    "cxx": "cpp",
+}
+
+
+def normalize_codebleu_language(language: Optional[str]) -> str:
+    """
+    Normalize dataset language names into names accepted by CodeBLEU.
+    """
+    if not language:
+        return "python"
+
+    normalized = language.strip().lower()
+    normalized = CODEBLEU_LANGUAGE_ALIASES.get(normalized, normalized)
+
+    if normalized not in CODEBLEU_SUPPORTED_LANGUAGES:
+        raise ValueError(
+            f"Unsupported CodeBLEU language: {language}. "
+            f"Supported languages: {sorted(CODEBLEU_SUPPORTED_LANGUAGES)}"
+        )
+
+    return normalized
+
+
+def code_tokenizer(code: str) -> List[str]:
+    """
+    Tokenizer used by CodeBLEU.
+
+    It separates identifiers, keywords, numbers, and punctuation.
+    """
     return re.findall(r"\w+|[^\w\s]", code)
 
-def _ngram_prec(cand: List[str], ref: List[str], n: int, wmap: Optional[dict] = None) -> float:
-    cg = [tuple(cand[i:i+n]) for i in range(len(cand)-n+1)]
-    if not cg: return 0.0
-    rg = [tuple(ref[i:i+n]) for i in range(len(ref)-n+1)]
-    rc = Counter(rg); cc = Counter(cg)
-    w  = lambda g: (wmap or {}).get(g[0], 1.0) if (wmap and n==1) else 1.0
-    num = sum(w(g)*min(c, rc.get(g,0)) for g,c in cc.items())
-    den = sum(w(g)*c for g,c in cc.items())
-    return num/den if den else 0.0
 
-def _bp(cand: List[str], ref: List[str]) -> float:
-    c,r = len(cand),len(ref)
-    return 1.0 if c>=r else (math.exp(1-r/c) if c else 0.0)
+def compute_codebleu_score(
+    candidate: str,
+    reference: str,
+    language: str = "python",
+    weights: Tuple[float, float, float, float] = CODEBLEU_WEIGHTS,
+) -> Dict[str, float]:
+    """
+    Compute CodeBLEU score for one candidate output and one reference code.
 
-def _bleu4(cand: str, ref: str) -> float:
-    ct,rt = _tokenize(cand),_tokenize(ref)
-    if not ct or not rt: return 0.0
-    ps = [max(_ngram_prec(ct,rt,n), 1e-9) for n in range(1,5)]
-    return math.exp(sum(math.log(p) for p in ps)/4) * _bp(ct,rt)
+    Returns scores in 0.0 to 1.0 scale:
+      - bleu
+      - bleu_weight
+      - match_ast
+      - match_df
+      - codebleu
+    """
+    lang = normalize_codebleu_language(language)
 
-def _bleu_w(cand: str, ref: str) -> float:
-    ct,rt = _tokenize(cand),_tokenize(ref)
-    if not ct or not rt: return 0.0
-    wm = {kw:5.0 for kw in PY_KEYWORDS}
-    p1 = max(_ngram_prec(ct,rt,1,wm), 1e-9)
-    return p1 * _bp(ct,rt)
+    result = calc_codebleu(
+        references=[reference],
+        predictions=[candidate],
+        lang=lang,
+        weights=weights,
+        tokenizer=code_tokenizer,
+    )
 
-def _ast_subtrees(code: str) -> Optional[List[tuple]]:
-    try: tree = ast.parse(code)
-    except SyntaxError: return None
-    subs = []
-    def sig(n):
-        ch = []
-        for _,v in ast.iter_fields(n):
-            if isinstance(v,list):
-                for x in v:
-                    if isinstance(x,ast.AST): ch.append(sig(x))
-            elif isinstance(v,ast.AST): ch.append(sig(v))
-        return (type(n).__name__, tuple(ch))
-    def walk(n):
-        subs.append(sig(n))
-        for c in ast.iter_child_nodes(n): walk(c)
-    walk(tree); return subs
-
-def _flatten(subs: List[tuple]) -> Counter:
-    cnt: Counter = Counter()
-    def ex(s):
-        cnt[s] += 1
-        for c in s[1]: ex(c)
-    for s in subs: ex(s)
-    return cnt
-
-def _ast_match(cand: str, ref: str) -> Optional[float]:
-    rs,cs = _ast_subtrees(ref),_ast_subtrees(cand)
-    if rs is None or cs is None or not rs: return 0.0
-    rc,cc = _flatten(rs),_flatten(cs)
-    tot = sum(rc.values())
-    return sum(min(c,cc.get(s,0)) for s,c in rc.items())/tot if tot else 0.0
-
-def _df_edges(code: str) -> Optional[List[Tuple[str,str]]]:
-    try: tree = ast.parse(code)
-    except SyntaxError: return None
-    edges: List[Tuple[str,str]] = []
-    ns = lambda n: [x.id for x in ast.walk(n) if isinstance(x,ast.Name)]
-    class V(ast.NodeVisitor):
-        def visit_Assign(self,n):
-            for t in n.targets:
-                for tn in ns(t):
-                    for s in ns(n.value):
-                        if s!=tn: edges.append((s,tn))
-            self.generic_visit(n)
-        def visit_Return(self,n):
-            if n.value:
-                for s in ns(n.value): edges.append((s,"<return>"))
-            self.generic_visit(n)
-    V().visit(tree); return edges
-
-def _norm_df(edges: List[Tuple[str,str]]) -> List[Tuple[str,str]]:
-    m:dict = {}; ctr = 0; out = []
-    for s,t in edges:
-        for v in (s,t):
-            if v!="<return>" and v not in m:
-                m[v]=f"var_{ctr}"; ctr+=1
-        out.append((m.get(s,s), m.get(t,t)))
-    return out
-
-def _df_match(cand: str, ref: str) -> Optional[float]:
-    re_= _df_edges(ref); ce = _df_edges(cand)
-    if re_ is None or ce is None or not re_: return 0.0
-    rc,cc = Counter(_norm_df(re_)),Counter(_norm_df(ce))
-    tot = sum(rc.values())
-    return sum(min(c,cc.get(e,0)) for e,c in rc.items())/tot if tot else 0.0
-
-def codebleu(cand: str, ref: str, lang: str = "python",
-             alpha=0.10, beta=0.10, gamma=0.40, delta=0.40) -> float:
-    """CodeBLEU (Ren et al. 2020). Weights: paper's recommended combo [7]."""
-    try:
-        from codebleu import calc_codebleu
-        r = calc_codebleu([ref],[cand],lang=lang,weights=(alpha,beta,gamma,delta))
-        return r["codebleu"]
-    except ImportError:
-        pass
-    b  = _bleu4(cand,ref)
-    bw = _bleu_w(cand,ref)
-    am = _ast_match(cand,ref)
-    dm = _df_match(cand,ref)
-    if am is None or dm is None:
-        a2,b2 = alpha/(alpha+beta), beta/(alpha+beta)
-        return a2*b + b2*bw
-    return alpha*b + beta*bw + gamma*am + delta*dm
+    return {
+        "bleu": float(result.get("ngram_match_score", 0.0)),
+        "bleu_weight": float(result.get("weighted_ngram_match_score", 0.0)),
+        "match_ast": float(result.get("syntax_match_score", 0.0)),
+        "match_df": float(result.get("dataflow_match_score", 0.0)),
+        "codebleu": float(result.get("codebleu", 0.0)),
+    }
 
 
-# ── CELL 8: Main evaluation loop ────────────────────────────
+# ── CELL 8: Evaluation loop ─────────────────────────────────
+
 def run_evaluation(cfg: Config = CFG):
-    print("=" * 60)
-    print("  Loading tokenizer & model ...")
-    tokenizer = load_tokenizer(cfg)
-    base      = load_base_model(cfg)
-    ft_model  = load_peft_model(base, cfg)
+    """
+    Run the full evaluation.
 
-    print("\n  Loading dataset ...")
+    This compares:
+      1. Base model output
+      2. Fine-tuned LoRA adapter output
+
+    Both are compared against the same reference code using CodeBLEU.
+    """
+    print("=" * 60)
+    print("Loading tokenizer and models...")
+    print("=" * 60)
+
+    tokenizer = load_tokenizer(cfg)
+    base_model = load_base_model(cfg)
+    fine_tuned_model = load_peft_model(base_model, cfg)
+
+    print("\n" + "=" * 60)
+    print("Loading evaluation dataset...")
+    print("=" * 60)
+
     records = load_eval_dataset(cfg)
 
     results = []
-    base_wins = ft_wins = 0
+    base_wins = 0
+    fine_tuned_wins = 0
+    draws = 0
 
-    for i, rec in enumerate(records, 1):
-        print(f"\n[{i}/{len(records)}] {rec['id']}")
+    for index, record in enumerate(records, start=1):
+        print(f"\n[{index}/{len(records)}] {record['id']}")
 
-        # Base model (adapter disabled)
-        with ft_model.disable_adapter():
-            base_out = generate_fix(ft_model, tokenizer, rec["input_code"], rec["context"], cfg)
+        # Model 1: Base model.
+        # The adapter is disabled so this is the original base model behavior.
+        with fine_tuned_model.disable_adapter():
+            base_output = generate_fix(
+                fine_tuned_model,
+                tokenizer,
+                record["input_code"],
+                record["context"],
+                cfg,
+            )
 
-        # Fine-tuned model (adapter active)
-        ft_out = generate_fix(ft_model, tokenizer, rec["input_code"], rec["context"], cfg)
+        # Model 2: Fine-tuned model.
+        # The adapter is active here.
+        fine_tuned_output = generate_fix(
+            fine_tuned_model,
+            tokenizer,
+            record["input_code"],
+            record["context"],
+            cfg,
+        )
 
-        ref  = rec["reference_code"]
-        lang = rec["language"] or "python"
+        reference_code = record["reference_code"]
+        language = normalize_codebleu_language(
+            record["language"] or cfg.filter_lang
+        )
 
-        # pass@k (exact match proxy — diff-xyz has no test harness)
-        base_correct = int(is_correct(base_out, ref))
-        ft_correct   = int(is_correct(ft_out,   ref))
-        base_pak = pass_at_k(1, base_correct, cfg.pass_k)
-        ft_pak   = pass_at_k(1, ft_correct,   cfg.pass_k)
+        base_scores = compute_codebleu_score(
+            candidate=base_output,
+            reference=reference_code,
+            language=language,
+            weights=CODEBLEU_WEIGHTS,
+        )
 
-        # CodeBLEU
-        base_cb = codebleu(base_out, ref, lang)
-        ft_cb   = codebleu(ft_out,   ref, lang)
+        fine_tuned_scores = compute_codebleu_score(
+            candidate=fine_tuned_output,
+            reference=reference_code,
+            language=language,
+            weights=CODEBLEU_WEIGHTS,
+        )
 
-        # Syntax (diagnostic only)
-        base_syn = syntax_valid(base_out, lang)
-        ft_syn   = syntax_valid(ft_out,   lang)
+        base_codebleu = base_scores["codebleu"]
+        fine_tuned_codebleu = fine_tuned_scores["codebleu"]
 
-        # Winner by CodeBLEU (more nuanced than exact match)
-        winner = "finetuned" if ft_cb > base_cb else "base"
-        if winner == "finetuned": ft_wins   += 1
-        else:                     base_wins += 1
+        if fine_tuned_codebleu > base_codebleu:
+            winner = "fine_tuned"
+            fine_tuned_wins += 1
+        elif base_codebleu > fine_tuned_codebleu:
+            winner = "base"
+            base_wins += 1
+        else:
+            winner = "draw"
+            draws += 1
 
-        print(f"  pass@{cfg.pass_k}  base={base_pak:.3f}  ft={ft_pak:.3f}")
-        print(f"  CodeBLEU base={base_cb:.3f}  ft={ft_cb:.3f}")
-        print(f"  Syntax   base={base_syn}      ft={ft_syn}")
-        print(f"  Winner   : {winner.upper()}")
+        print(f"  Language       : {language}")
+        print(f"  CodeBLEU       base={base_codebleu:.4f}  fine_tuned={fine_tuned_codebleu:.4f}")
+        print(f"  BLEU           base={base_scores['bleu']:.4f}  fine_tuned={fine_tuned_scores['bleu']:.4f}")
+        print(f"  BLEUweight     base={base_scores['bleu_weight']:.4f}  fine_tuned={fine_tuned_scores['bleu_weight']:.4f}")
+        print(f"  Match_ast      base={base_scores['match_ast']:.4f}  fine_tuned={fine_tuned_scores['match_ast']:.4f}")
+        print(f"  Match_df       base={base_scores['match_df']:.4f}  fine_tuned={fine_tuned_scores['match_df']:.4f}")
+        print(f"  Winner         : {winner.upper()}")
 
         results.append({
-            "id": rec["id"], "language": lang, "winner": winner,
-            "base_pass_at_k": base_pak,   "ft_pass_at_k": ft_pak,
-            "base_codebleu":  base_cb,    "ft_codebleu":  ft_cb,
-            "base_syntax":    base_syn,   "ft_syntax":    ft_syn,
-            "base_output":    base_out,   "ft_output":    ft_out,
-            "reference":      ref,
+            "id": record["id"],
+            "language": language,
+            "winner": winner,
+
+            "base_codebleu": base_scores["codebleu"],
+            "base_bleu": base_scores["bleu"],
+            "base_bleu_weight": base_scores["bleu_weight"],
+            "base_match_ast": base_scores["match_ast"],
+            "base_match_df": base_scores["match_df"],
+
+            "fine_tuned_codebleu": fine_tuned_scores["codebleu"],
+            "fine_tuned_bleu": fine_tuned_scores["bleu"],
+            "fine_tuned_bleu_weight": fine_tuned_scores["bleu_weight"],
+            "fine_tuned_match_ast": fine_tuned_scores["match_ast"],
+            "fine_tuned_match_df": fine_tuned_scores["match_df"],
+
+            "input_code": record["input_code"],
+            "reference_code": reference_code,
+            "base_output": base_output,
+            "fine_tuned_output": fine_tuned_output,
+            "context": record["context"],
         })
 
-    # Aggregate
-    n   = len(results)
-    avg = lambda k: sum(r[k] for r in results) / n if n else 0.0
+    aggregate = build_aggregate_results(
+        results=results,
+        base_wins=base_wins,
+        fine_tuned_wins=fine_tuned_wins,
+        draws=draws,
+    )
 
-    agg = {
-        "n_samples":        n,
-        "base_wins":        base_wins,
-        "ft_wins":          ft_wins,
-        f"avg_pass@{cfg.pass_k}_base": avg("base_pass_at_k"),
-        f"avg_pass@{cfg.pass_k}_ft":   avg("ft_pass_at_k"),
-        "avg_codebleu_base": avg("base_codebleu"),
-        "avg_codebleu_ft":   avg("ft_codebleu"),
-        "avg_syntax_base":   avg("base_syntax"),
-        "avg_syntax_ft":     avg("ft_syntax"),
-        "metric_notes": {
-            "pass@k":    "Chen et al. 2021 (arXiv:2107.03374). c = exact-match to reference (no test harness in diff-xyz).",
-            "codebleu":  "Ren et al. 2020 (arXiv:2009.10297). Weights [alpha,beta,gamma,delta]=[0.1,0.1,0.4,0.4] (paper combo [7]).",
-            "syntax":    "Diagnostic only. Not from either paper. Not used for ranking.",
+    save_report(
+        cfg=cfg,
+        results=results,
+        aggregate=aggregate,
+    )
+
+    print_final_summary(aggregate)
+
+    return results, aggregate
+
+
+def average(results: List[dict], key: str) -> float:
+    """
+    Calculate average value for a score key.
+    """
+    if not results:
+        return 0.0
+
+    return sum(result[key] for result in results) / len(results)
+
+
+def build_aggregate_results(
+    results: List[dict],
+    base_wins: int,
+    fine_tuned_wins: int,
+    draws: int,
+) -> dict:
+    """
+    Build final aggregate result summary.
+    """
+    return {
+        "n_samples": len(results),
+        "score_scale": "0.0_to_1.0",
+
+        "base_wins": base_wins,
+        "fine_tuned_wins": fine_tuned_wins,
+        "draws": draws,
+
+        "avg_codebleu_base": average(results, "base_codebleu"),
+        "avg_codebleu_fine_tuned": average(results, "fine_tuned_codebleu"),
+        "avg_codebleu_improvement": (
+            average(results, "fine_tuned_codebleu")
+            - average(results, "base_codebleu")
+        ),
+
+        "avg_bleu_base": average(results, "base_bleu"),
+        "avg_bleu_fine_tuned": average(results, "fine_tuned_bleu"),
+
+        "avg_bleu_weight_base": average(results, "base_bleu_weight"),
+        "avg_bleu_weight_fine_tuned": average(results, "fine_tuned_bleu_weight"),
+
+        "avg_match_ast_base": average(results, "base_match_ast"),
+        "avg_match_ast_fine_tuned": average(results, "fine_tuned_match_ast"),
+
+        "avg_match_df_base": average(results, "base_match_df"),
+        "avg_match_df_fine_tuned": average(results, "fine_tuned_match_df"),
+
+        "metric_reference": {
+            "metric": "CodeBLEU",
+            "paper": "CodeBLEU: a Method for Automatic Evaluation of Code Synthesis",
+            "authors": "Ren et al.",
+            "year": 2020,
+            "arxiv": "2009.10297",
+            "formula": "CodeBLEU = α·BLEU + β·BLEUweight + γ·Match_ast + δ·Match_df",
+            "weights_used": {
+                "alpha_bleu": CODEBLEU_WEIGHTS[0],
+                "beta_weighted_ngram": CODEBLEU_WEIGHTS[1],
+                "gamma_ast_match": CODEBLEU_WEIGHTS[2],
+                "delta_dataflow_match": CODEBLEU_WEIGHTS[3],
+            },
+            "components": [
+                "standard BLEU / n-gram match",
+                "weighted n-gram match",
+                "syntax / AST match",
+                "data-flow match",
+            ],
+            "implementation_note": (
+                "CodeBLEU scores were computed using a CodeBLEU implementation "
+                "that returns n-gram match, weighted n-gram match, syntax match, "
+                "data-flow match, and final CodeBLEU score."
+            ),
         },
     }
 
+
+def save_report(
+    cfg: Config,
+    results: List[dict],
+    aggregate: dict,
+) -> None:
+    """
+    Save full evaluation report as JSON.
+    """
+    report = {
+        "aggregate": aggregate,
+        "per_sample": results,
+    }
+
+    with open(cfg.save_report, "w", encoding="utf-8") as file:
+        json.dump(
+            report,
+            file,
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    print(f"\nReport saved → {cfg.save_report}")
+
+
+def print_final_summary(aggregate: dict) -> None:
+    """
+    Print final summary after all samples are evaluated.
+    """
+    if aggregate["fine_tuned_wins"] > aggregate["base_wins"]:
+        verdict = "FINE-TUNED MODEL IS BETTER"
+    elif aggregate["base_wins"] > aggregate["fine_tuned_wins"]:
+        verdict = "BASE MODEL IS BETTER"
+    else:
+        verdict = "DRAW"
+
     print("\n" + "=" * 60)
-    print("FINAL RESULTS")
+    print("FINAL CODEBLEU RESULTS")
     print("=" * 60)
-    for k, v in agg.items():
-        if k != "metric_notes": print(f"  {k}: {v}")
-    verdict = ("FINETUNED is better" if ft_wins > base_wins
-               else "BASE is better — more data/epochs may help"
-               if base_wins > ft_wins else "DRAW")
-    print(f"\n  VERDICT: {verdict}")
+    print(f"Samples evaluated              : {aggregate['n_samples']}")
+    print(f"Base wins                      : {aggregate['base_wins']}")
+    print(f"Fine-tuned wins                : {aggregate['fine_tuned_wins']}")
+    print(f"Draws                          : {aggregate['draws']}")
+    print()
+    print(f"Average CodeBLEU Base          : {aggregate['avg_codebleu_base']:.4f}")
+    print(f"Average CodeBLEU Fine-tuned    : {aggregate['avg_codebleu_fine_tuned']:.4f}")
+    print(f"Average CodeBLEU Improvement   : {aggregate['avg_codebleu_improvement']:.4f}")
+    print()
+    print(f"Average BLEU Base              : {aggregate['avg_bleu_base']:.4f}")
+    print(f"Average BLEU Fine-tuned        : {aggregate['avg_bleu_fine_tuned']:.4f}")
+    print()
+    print(f"Average BLEUweight Base        : {aggregate['avg_bleu_weight_base']:.4f}")
+    print(f"Average BLEUweight Fine-tuned  : {aggregate['avg_bleu_weight_fine_tuned']:.4f}")
+    print()
+    print(f"Average Match_ast Base         : {aggregate['avg_match_ast_base']:.4f}")
+    print(f"Average Match_ast Fine-tuned   : {aggregate['avg_match_ast_fine_tuned']:.4f}")
+    print()
+    print(f"Average Match_df Base          : {aggregate['avg_match_df_base']:.4f}")
+    print(f"Average Match_df Fine-tuned    : {aggregate['avg_match_df_fine_tuned']:.4f}")
+    print()
+    print(f"Verdict                        : {verdict}")
+    print("=" * 60)
 
-    with open(cfg.save_report, "w") as f:
-        json.dump({"aggregate": agg, "per_sample": results}, f, indent=2)
-    print(f"\n  Report saved -> {cfg.save_report}")
-    return results
 
+# ── CELL 9: Run evaluation ──────────────────────────────────
 
-# ── CELL 9: Run ─────────────────────────────────────────────
 if __name__ == "__main__":
-    run_evaluation(CFG)
+    results, aggregate = run_evaluation(CFG)
