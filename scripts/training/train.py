@@ -309,7 +309,7 @@ def normalize_messages(example: Dict[str, Any], system_prompt: str) -> List[Dict
     else:
         instruction = example.get("instruction") or "Complete the task."
         input_block = stringify_input(example.get("input"))
-        output_block = stringify_input(example.get("../../server_upload/output"))
+        output_block = stringify_input(example.get("output"))
         user_content = instruction
         if input_block:
             user_content = f"{instruction}\n\nContext:\n{input_block}"
@@ -416,7 +416,7 @@ def build_tokenize_fn(cfg: TrainConfig, tokenizer: PreTrainedTokenizerBase):
 
         response_ids = full_ids[len(prompt_ids):]
         if not response_ids:
-            output_text = stringify_input(example.get("../../server_upload/output") or example.get("completion"))
+            output_text = stringify_input(example.get("output") or example.get("completion"))
             response_ids = tokenizer(output_text, add_special_tokens=False)["input_ids"]
         if not response_ids:
             raise ValueError("Example has no tokenized assistant response")
